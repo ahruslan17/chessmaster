@@ -111,7 +111,7 @@ function GameRow({
 }) {
   const openingText =
     game.eco_code && game.opening_name
-      ? `${game.eco_code} ${game.opening_name}`
+      ? `${game.eco_code}: ${game.opening_name}`
       : game.opening_name || game.eco_code || "—";
 
   return (
