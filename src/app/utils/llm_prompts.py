@@ -21,7 +21,8 @@ SINGLE_MOVE_COMMENTARY_SYSTEM = (
     "For 'theory' moves (opening book): explain why this move is played and what "
     "it aims to achieve; do NOT suggest a best move or alternative. "
     "For best/good moves: brief positive reinforcement. "
-    "For inaccuracies/mistakes/blunders: explain the error and better alternative.\n"
+    "For inaccuracies/mistakes/blunders: explain the error and better alternative. "
+    "Use both engine lines and the real game continuation to explain long-term impact.\n"
 )
 
 MOVE_COMMENTARY_SYSTEM = (
@@ -41,7 +42,9 @@ MOVE_COMMENTARY_SYSTEM = (
     '- For "blunder" moves: 4-5 sentences with a detailed explanation of the '
     "critical error, the best move, and how the position changes.\n\n"
     "Use standard algebraic notation. Reference engine-suggested continuations "
-    "when they clarify the point. Be encouraging but honest.\n\n"
+    "when they clarify the point. Compare the engine PV with the real game "
+    "continuation to explain both immediate and long-term consequences of the move. "
+    "Be encouraging but honest.\n\n"
     "You MUST respond with ONLY a JSON object in this exact format "
     "(no markdown fences, no extra text):\n"
     "{\n"
@@ -193,7 +196,8 @@ def build_period_report_messages(
 # ---------------------------------------------------------------------------
 
 _TOP_MOVES_IN_PROMPT = 3
-_PV_MOVES_IN_PROMPT = 5
+_PV_MOVES_IN_PROMPT = 10
+_NEXT_GAME_MOVES_IN_PROMPT = 10
 
 
 def _format_move_context(move: MoveCommentaryInput) -> str:
@@ -215,6 +219,16 @@ def _format_move_context(move: MoveCommentaryInput) -> str:
             pv_san = candidate.get("pv_san", [])
             pv_str = " ".join(pv_san[:_PV_MOVES_IN_PROMPT])
             eval_cp = candidate.get("eval_cp", 0)
-            lines.append(f"    {candidate['move_san']} ({eval_cp:+.0f} cp): {pv_str}")
+            move_san = candidate.get("move_san", "?")
+            lines.append(f"    {move_san} ({eval_cp:+.0f} cp): {pv_str}")
+
+    if move.next_game_moves:
+        continuation = " ".join(move.next_game_moves[:_NEXT_GAME_MOVES_IN_PROMPT])
+    else:
+        continuation = "<none>"
+    lines.append(
+        "  Actual game continuation "
+        f"(next {_NEXT_GAME_MOVES_IN_PROMPT} half-moves): {continuation}"
+    )
 
     return "\n".join(lines)

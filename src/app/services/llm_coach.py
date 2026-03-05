@@ -38,6 +38,7 @@ class MoveCommentaryInput:
     centipawn_loss: float  # always >= 0
     classification: str  # best / good / inaccuracy / mistake / blunder
     top_moves: list[dict[str, object]] = field(default_factory=list)
+    next_game_moves: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

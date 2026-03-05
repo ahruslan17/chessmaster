@@ -66,11 +66,10 @@ export function ChessBoard({
   let badgeStyle: React.CSSProperties | null = null;
   if (theoryBadgeSquare) {
     const { col, row } = squareToIndices(theoryBadgeSquare);
-    const isBlack = orientation === "black";
-    const left = isBlack
-      ? (7 - col) * cell - BADGE_SIZE
-      : (col + 1) * cell - BADGE_SIZE;
-    const top = isBlack ? (7 - row) * cell : row * cell;
+    const displayCol = orientation === "black" ? 7 - col : col;
+    const displayRow = orientation === "black" ? 7 - row : row;
+    const left = (displayCol + 1) * cell - BADGE_SIZE;
+    const top = displayRow * cell;
     badgeStyle = {
       position: "absolute",
       left,

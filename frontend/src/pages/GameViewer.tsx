@@ -17,8 +17,11 @@ export function GameViewer() {
   const [autoplay, setAutoplay] = useState(false);
 
   const { data: game, isLoading: gameLoading, error: gameError } = useGame(gameId ?? null);
-  const { data: analysis, refetch: refetchAnalysis } = useAnalysis(gameId ?? null);
   const { data: status } = useAnalysisStatus(gameId ?? null);
+  const { data: analysis, refetch: refetchAnalysis } = useAnalysis(
+    gameId ?? null,
+    status?.status === "in_progress"
+  );
 
   // Build FEN at each move index from PGN
   const positions = useBuildPositions(game?.pgn_text);
@@ -80,8 +83,9 @@ export function GameViewer() {
     );
   }
 
-  const analysisReady = analysis && status?.status === "done";
+  const hasAnalyzedMoves = Boolean(analysis?.moves.length);
   const isAnalyzing = status?.status === "pending" || status?.status === "in_progress";
+  const analysisFailed = status?.status === "failed";
 
   return (
     <div className="space-y-6">
@@ -106,6 +110,12 @@ export function GameViewer() {
       {isAnalyzing && (
         <div className="rounded-lg border border-chess-inaccuracy/50 bg-chess-inaccuracy/10 px-4 py-2 text-sm text-chess-inaccuracy">
           Analysis in progress... This may take a few minutes.
+        </div>
+      )}
+
+      {analysisFailed && (
+        <div className="rounded-lg border border-red-400/50 bg-red-500/10 px-4 py-2 text-sm text-red-400">
+          Analysis failed. Please re-upload the game or try again later.
         </div>
       )}
 
@@ -164,15 +174,18 @@ export function GameViewer() {
             </NavButton>
           </div>
 
-          {analysisReady && analysis.moves.length > 0 && (
+          {hasAnalyzedMoves && (
             <MoveList
-              moves={analysis.moves}
+              moves={analysis?.moves ?? []}
               currentMoveIndex={currentMoveIndex}
               onSelectMove={goToMove}
             />
           )}
 
           <CommentaryPanel
+            gameId={gameId}
+            moveIndex={currentMoveIndex > 0 ? currentMoveIndex - 1 : null}
+            allowStreaming={status?.status === "done"}
             move={currentMove}
             summary={analysis?.summary ?? undefined}
           />

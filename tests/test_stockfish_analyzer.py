@@ -9,6 +9,7 @@ from app.services.stockfish_analyzer import (
     CandidateMove,
     MoveEvaluation,
     StockfishAnalyzerService,
+    _analyze_position,
     _build_candidates_san,
     _compute_centipawn_loss,
 )
@@ -61,6 +62,20 @@ class TestBuildCandidatesSan:
         assert result[0].move_san == "e4"
         assert result[0].pv_san == ["e4", "e5"]
         assert result[0].eval_cp == 30.0
+
+
+class TestAnalyzePosition:
+    def test_checkmate_position_returns_mate_eval(self) -> None:
+        board = chess.Board("7k/6Q1/6K1/8/8/8/8/8 b - - 0 1")
+        info = _analyze_position(
+            engine=MagicMock(),
+            board=board,
+            limit=chess.engine.Limit(depth=1),
+            multipv=5,
+        )
+
+        assert info.candidates == []
+        assert info.eval_white_cp > 9000
 
 
 # ---------------------------------------------------------------------------

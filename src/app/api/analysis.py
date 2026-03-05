@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 
 from fastapi import APIRouter
@@ -17,6 +18,8 @@ from app.services.pgn_parser import PGNParserService
 from app.utils.chess_helpers import moves_to_fens
 
 router = APIRouter(prefix="/games/{game_id}/analysis", tags=["analysis"])
+logger = logging.getLogger(__name__)
+_NEXT_GAME_MOVES_CONTEXT = 10
 
 
 @router.get("", response_model=GameAnalysisRead)
@@ -121,13 +124,28 @@ async def stream_move_commentary(
         centipawn_loss=move_record.centipawn_loss or 0.0,
         classification=move_record.classification or "good",
         top_moves=(move_record.top_moves or []) if isinstance(move_record.top_moves, list) else [],
+        next_game_moves=[
+            _format_move_label(m.move_number, m.color, m.move_san or "?")
+            for m in moves_sorted[move_index + 1 : move_index + 1 + _NEXT_GAME_MOVES_CONTEXT]
+        ],
     )
 
     async def _stream() -> object:
+        chunks: list[str] = []
         async for chunk in llm_coach.generate_single_move_commentary_stream(move_input):
+            chunks.append(chunk)
             for line in chunk.split("\n"):
                 yield f"data: {line}\n"
             yield "\n"
+
+        # Cache generated commentary to avoid repeated LLM calls for the same move.
+        comment = "".join(chunks).strip()
+        if comment:
+            move_record.llm_comment = comment
+            try:
+                await session.commit()
+            except Exception:
+                logger.exception("Failed to persist streamed commentary for game %s", game_id)
 
     return StreamingResponse(
         _stream(),
@@ -154,3 +172,8 @@ async def get_analysis_status(
         return AnalysisStatusRead(game_id=game_id, status="pending")
 
     return AnalysisStatusRead(game_id=game_id, status=status)
+
+
+def _format_move_label(move_number: int, color: str, move_san: str) -> str:
+    color_sep = "." if color == "white" else "..."
+    return f"{move_number}{color_sep}{move_san}"

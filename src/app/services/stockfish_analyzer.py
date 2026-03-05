@@ -8,6 +8,7 @@ import chess.engine
 
 from app.core.config import settings
 from app.utils.chess_helpers import (
+    MATE_SCORE_CP,
     classify_move,
     pv_to_san,
     score_to_centipawns,
@@ -85,10 +86,10 @@ def _analyze_position(
     multipv: int,
 ) -> _PositionInfo:
     """Run Stockfish multipv analysis on a single position."""
-    effective_multipv = min(multipv, len(list(board.legal_moves)))
+    effective_multipv = min(multipv, board.legal_moves.count())
     if effective_multipv == 0:
-        # No legal moves (checkmate or stalemate)
-        return _PositionInfo(eval_white_cp=0.0, candidates=[])
+        # No legal moves: map terminal position to a stable score.
+        return _PositionInfo(eval_white_cp=_terminal_eval_white_cp(board), candidates=[])
 
     infos = engine.analyse(
         board,
@@ -101,8 +102,11 @@ def _analyze_position(
         infos = [infos]
 
     candidates: list[_CandidateRaw] = []
-    for info in infos:
-        pov_score: chess.engine.PovScore = info["score"]
+    infos_sorted = sorted(infos, key=lambda i: int(i.get("multipv", 1)))
+    for info in infos_sorted:
+        pov_score = info.get("score")
+        if pov_score is None:
+            continue
         pv_moves: list[chess.Move] = info.get("pv", [])
         first_move = pv_moves[0] if pv_moves else info.get("move")
         if first_move is None:
@@ -113,6 +117,14 @@ def _analyze_position(
     return _PositionInfo(eval_white_cp=best_eval, candidates=candidates)
 
 
+def _terminal_eval_white_cp(board: chess.Board) -> float:
+    """Return a terminal position score from white's perspective."""
+    if board.is_checkmate():
+        # Side to move is checkmated.
+        return -float(MATE_SCORE_CP) if board.turn == chess.WHITE else float(MATE_SCORE_CP)
+    return 0.0
+
+
 def _build_candidates_san(
     board: chess.Board,
     candidates: list[_CandidateRaw],
@@ -120,10 +132,13 @@ def _build_candidates_san(
     """Convert raw candidate data to SAN-based CandidateMove objects."""
     result: list[CandidateMove] = []
     for raw in candidates:
-        move_san = board.san(raw.move)
-        eval_cp = score_to_centipawns(raw.score, chess.WHITE)
-        pv_san = pv_to_san(board, raw.pv)
-        result.append(CandidateMove(move_san=move_san, eval_cp=eval_cp, pv_san=pv_san))
+        try:
+            move_san = board.san(raw.move)
+            eval_cp = score_to_centipawns(raw.score, chess.WHITE)
+            pv_san = pv_to_san(board, raw.pv)
+            result.append(CandidateMove(move_san=move_san, eval_cp=eval_cp, pv_san=pv_san))
+        except (ValueError, AssertionError):
+            logger.debug("Skipping invalid candidate move during SAN conversion")
     return result
 
 

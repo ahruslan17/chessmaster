@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 # Classifications considered "key moments" for game summary context.
 _KEY_MOMENT_CLASSIFICATIONS = frozenset({"inaccuracy", "mistake", "blunder"})
+_NEXT_GAME_MOVES_CONTEXT = 10
 
 
 class GameReviewService:
@@ -152,10 +153,10 @@ class GameReviewService:
         evaluations: list[MoveEvaluation],
         opening_move_count: int = 0,
     ) -> None:
-        """Persist Stockfish evaluation results and update analysis status.
+        """Persist Stockfish evaluation results.
 
-        Creates MoveAnalysis records, computes accuracy stats, and sets
-        the GameAnalysis status to 'done'. Moves within the opening (index <
+        Creates MoveAnalysis records and computes accuracy stats.
+        Moves within the opening (index <
         opening_move_count) are marked as classification='theory'.
         """
         analysis = await self._session.get(GameAnalysis, game_analysis_id)
@@ -179,7 +180,6 @@ class GameReviewService:
         black_losses = [ev.centipawn_loss for ev in evaluations if ev.color == "black"]
         analysis.accuracy_white = compute_accuracy(white_losses)
         analysis.accuracy_black = compute_accuracy(black_losses)
-        analysis.status = "done"
 
         await self._session.flush()
         logger.info(
@@ -189,6 +189,15 @@ class GameReviewService:
             analysis.accuracy_white,
             analysis.accuracy_black,
         )
+
+    async def mark_analysis_done(self, game_id: uuid.UUID) -> None:
+        """Set analysis status to 'done' for the given game."""
+        stmt = select(GameAnalysis).where(GameAnalysis.game_id == game_id)
+        result = await self._session.execute(stmt)
+        analysis = result.scalar_one_or_none()
+        if analysis is not None:
+            analysis.status = "done"
+            await self._session.flush()
 
     async def mark_analysis_failed(self, game_id: uuid.UUID) -> None:
         """Set analysis status to 'failed' for the given game."""
@@ -369,6 +378,7 @@ def _build_move_commentary_inputs(
 ) -> list[MoveCommentaryInput]:
     """Combine per-position FENs with Stockfish evaluations into LLM inputs."""
     inputs: list[MoveCommentaryInput] = []
+    move_labels = [_format_move_label(ev.move_number, ev.color, ev.move_san) for ev in evaluations]
     for idx, evaluation in enumerate(evaluations):
         classification = (
             "theory"
@@ -376,6 +386,7 @@ def _build_move_commentary_inputs(
             else evaluation.classification
         )
         fen = fens[idx] if idx < len(fens) else ""
+        next_game_moves = move_labels[idx + 1 : idx + 1 + _NEXT_GAME_MOVES_CONTEXT]
         inputs.append(
             MoveCommentaryInput(
                 move_index=idx,
@@ -389,9 +400,15 @@ def _build_move_commentary_inputs(
                 centipawn_loss=evaluation.centipawn_loss,
                 classification=classification,
                 top_moves=evaluation.top_moves_as_json(),
+                next_game_moves=next_game_moves,
             )
         )
     return inputs
+
+
+def _format_move_label(move_number: int, color: str, move_san: str) -> str:
+    color_sep = "." if color == "white" else "..."
+    return f"{move_number}{color_sep}{move_san}"
 
 
 def _build_game_summary_input(

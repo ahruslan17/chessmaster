@@ -119,6 +119,8 @@ class TestBuildMoveCommentaryInputs:
         assert inputs[0].move_index == 0
         assert inputs[0].move_san == "e4"
         assert inputs[0].fen_before == fens[0]
+        assert inputs[0].next_game_moves == ["1...e5"]
+        assert inputs[1].next_game_moves == []
 
 
 # ---------------------------------------------------------------------------

@@ -24,12 +24,14 @@ def analyze_game_task(self, game_id: str) -> dict[str, str]:  # type: ignore[ove
     """Celery task: run full analysis pipeline for one game.
 
     Pipeline: Stockfish evaluation -> LLM commentary enrichment.
-    The heavy work (Stockfish) runs synchronously; DB access uses asyncio.run().
-    LLM enrichment runs if configured; failures are logged but do not fail the task.
+    Runs the async pipeline inside a dedicated event loop per task to avoid
+    cross-loop DB connection issues inside Celery workers.
     """
     logger.info("Celery task started: analyze game %s", game_id)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     try:
-        asyncio.run(_run_analysis_pipeline(game_id))
+        loop.run_until_complete(_run_analysis_pipeline(game_id))
         return {"game_id": game_id, "status": "done"}
     except IntegrityError as exc:
         logger.warning(
@@ -40,8 +42,16 @@ def analyze_game_task(self, game_id: str) -> dict[str, str]:  # type: ignore[ove
         return {"game_id": game_id, "status": "skipped"}
     except Exception as exc:
         logger.error("Analysis task failed for game %s: %s", game_id, exc, exc_info=True)
-        asyncio.run(_dispose_and_mark_failed(game_id))
+        loop.run_until_complete(_mark_failed(game_id))
         raise self.retry(exc=exc) from exc
+    finally:
+        try:
+            loop.run_until_complete(engine.dispose())
+        except Exception as e:
+            logger.warning("Engine dispose during task cleanup failed: %s", e)
+        finally:
+            asyncio.set_event_loop(None)
+            loop.close()
 
 
 async def _run_analysis_pipeline(game_id_str: str) -> None:
@@ -77,6 +87,8 @@ async def _run_analysis_pipeline(game_id_str: str) -> None:
         stockfish_path=settings.stockfish_path,
         depth=settings.stockfish_depth,
         multipv=settings.stockfish_multipv,
+        time_limit=settings.stockfish_time_limit,
+        threads=settings.stockfish_threads,
     )
     evaluations = analyzer.analyze_game(parsed_game.moves)
     logger.info("Stockfish analysis complete: %d moves evaluated", len(evaluations))
@@ -95,29 +107,30 @@ async def _run_analysis_pipeline(game_id_str: str) -> None:
         await session.commit()
 
     # --- Step 5: LLM commentary enrichment (if configured) ---
+    if _llm_enabled():
+        async with async_session_factory() as session:
+            game = await session.get(Game, game_uuid)
+            if game is not None:
+                llm_coach = LLMCoachService()
+                service = GameReviewService(session, llm_coach=llm_coach)
+                await service.enrich_with_llm_commentary(
+                    analysis_id, game, evaluations, opening_move_count=opening_move_count
+                )
+                await session.commit()
+    else:
+        logger.info("LLM is not configured, skipping commentary enrichment for %s", game_id_str)
+
+    # --- Step 6: Mark analysis as done only after all enrichment steps complete ---
     async with async_session_factory() as session:
-        game = await session.get(Game, game_uuid)
-        if game is not None:
-            llm_coach = LLMCoachService()
-            service = GameReviewService(session, llm_coach=llm_coach)
-            await service.enrich_with_llm_commentary(
-                analysis_id, game, evaluations, opening_move_count=opening_move_count
-            )
-            await session.commit()
+        service = GameReviewService(session)
+        await service.mark_analysis_done(game_uuid)
+        await session.commit()
 
     logger.info("Analysis pipeline complete for game %s", game_id_str)
 
 
-async def _dispose_and_mark_failed(game_id_str: str) -> None:
-    """Dispose engine connections, then mark analysis as failed.
-
-    Must dispose first so the next session uses a fresh event loop/connections,
-    avoiding 'Future attached to a different loop' errors in Celery workers.
-    """
-    try:
-        await engine.dispose()
-    except Exception as e:
-        logger.warning("Engine dispose during cleanup: %s", e)
+async def _mark_failed(game_id_str: str) -> None:
+    """Mark analysis status as failed for a game."""
     try:
         game_uuid = uuid.UUID(game_id_str)
         async with async_session_factory() as session:
@@ -126,3 +139,8 @@ async def _dispose_and_mark_failed(game_id_str: str) -> None:
             await session.commit()
     except Exception:
         logger.error("Failed to mark analysis as failed for %s", game_id_str, exc_info=True)
+
+
+def _llm_enabled() -> bool:
+    """Whether LLM enrichment should run in the async pipeline."""
+    return bool(settings.llm_api_key or settings.litellm_base_url)

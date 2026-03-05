@@ -49,6 +49,66 @@ export async function getAnalysisStatus(
   return fetchApi(`games/${gameId}/analysis/status`);
 }
 
+export async function streamMoveCommentary(
+  gameId: string,
+  moveIndex: number,
+  onChunk?: (chunk: string) => void,
+  signal?: AbortSignal
+): Promise<string> {
+  const res = await fetch(
+    `${API_BASE}/games/${gameId}/analysis/moves/${moveIndex}/commentary/stream`,
+    {
+      headers: { Accept: "text/event-stream" },
+      signal,
+    }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error((err as { detail?: string }).detail ?? "Commentary stream failed");
+  }
+
+  if (!res.body) return "";
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let fullText = "";
+  let eventData: string[] = [];
+
+  const flushEvent = () => {
+    if (eventData.length === 0) return;
+    const chunk = eventData.join("\n");
+    fullText += chunk;
+    onChunk?.(chunk);
+    eventData = [];
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+
+    for (const rawLine of lines) {
+      const line = rawLine.trimEnd();
+      if (line.startsWith("data:")) {
+        eventData.push(line.startsWith("data: ") ? line.slice(6) : "");
+        continue;
+      }
+      if (line === "") flushEvent();
+    }
+  }
+
+  const tail = buffer.trimEnd();
+  if (tail.startsWith("data:")) {
+    eventData.push(tail.startsWith("data: ") ? tail.slice(6) : "");
+  }
+  flushEvent();
+  return fullText.trim();
+}
+
 export async function uploadPgn(
   file: File,
   playerColor?: "white" | "black"

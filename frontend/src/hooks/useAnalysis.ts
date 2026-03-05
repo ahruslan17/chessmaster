@@ -1,11 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import * as api from "../api/client";
 
-export function useAnalysis(gameId: string | null) {
+export function useAnalysis(gameId: string | null, pollWhileRunning = false) {
   return useQuery({
     queryKey: ["analysis", gameId],
     queryFn: () => api.getAnalysis(gameId!),
     enabled: !!gameId,
+    refetchInterval: pollWhileRunning ? 2000 : false,
   });
 }
 

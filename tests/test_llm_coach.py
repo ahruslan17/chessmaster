@@ -53,6 +53,7 @@ def _make_move_input(
             {"move_san": "e5", "eval_cp": 0.2, "pv_san": ["e5", "Nf3", "Nc6"]},
             {"move_san": "d5", "eval_cp": -0.1, "pv_san": ["d5", "exd5", "Qxd5"]},
         ],
+        next_game_moves=["2.Nf3", "2...Nc6", "3.Bb5"],
     )
 
 
@@ -174,6 +175,7 @@ class TestPromptBuilders:
         assert "FEN:" in user_content
         assert "Eval:" in user_content
         assert "Engine lines:" in user_content
+        assert "Actual game continuation" in user_content
 
     def test_game_summary_messages_structure(self) -> None:
         context = _make_game_summary_input()

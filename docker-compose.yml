@@ -60,7 +60,17 @@ services:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
-    command: ["uv", "run", "celery", "-A", "app.core.celery_app", "worker", "--loglevel=info"]
+    command:
+      [
+        "uv",
+        "run",
+        "celery",
+        "-A",
+        "app.core.celery_app",
+        "worker",
+        "--loglevel=info",
+        "--concurrency=${CELERY_CONCURRENCY:-1}",
+      ]
     environment:
       DATABASE_URL: postgresql+asyncpg://chess:chess@postgres:5432/chess_master
       REDIS_URL: redis://redis:6379/0
