@@ -184,8 +184,6 @@ export function GameViewer() {
             />
           )}
 
-          <AnalysisLegend onOpenHelp={() => setShowScoringHelp(true)} />
-
           <CommentaryPanel
             gameId={gameId}
             moveIndex={currentMoveIndex > 0 ? currentMoveIndex - 1 : null}
@@ -193,6 +191,8 @@ export function GameViewer() {
             move={currentMove}
             summary={analysis?.summary ?? undefined}
           />
+
+          <AnalysisLegend onOpenHelp={() => setShowScoringHelp(true)} />
         </div>
       </div>
 
