@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.models.game import Game
+from app.services.opening_matcher import OpeningMatch
 from app.services.game_review import (
     GameReviewService,
     _build_game_record,
@@ -176,6 +177,66 @@ class TestGameReviewService:
         assert games[0].white_player == "Player1"
         mock_session.add.assert_called()
         mock_session.flush.assert_awaited()
+
+    @pytest.mark.asyncio()
+    async def test_create_games_uses_opening_matcher(self) -> None:
+        mock_session = AsyncMock()
+        mock_session.flush = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        mock_opening_matcher = MagicMock()
+        mock_opening_matcher.match.return_value = OpeningMatch(
+            eco_code="B07",
+            name="Pirc Defense",
+            move_count=10,
+        )
+
+        service = GameReviewService(mock_session, opening_matcher=mock_opening_matcher)
+        games, _ = await service.create_games_from_pgn(SAMPLE_PGN_SINGLE)
+
+        assert len(games) == 1
+        assert games[0].eco_code == "B07"
+        assert games[0].opening_name == "Pirc Defense"
+        mock_opening_matcher.match.assert_called_once()
+
+    @pytest.mark.asyncio()
+    async def test_duplicate_game_backfills_missing_opening(self) -> None:
+        existing = Game(
+            pgn_text=SAMPLE_PGN_SINGLE,
+            white_player="Player1",
+            black_player="Player2",
+            result="1-0",
+            opening_name=None,
+            eco_code=None,
+            time_control=None,
+            played_at=None,
+            player_color=None,
+        )
+        existing.id = uuid.uuid4()
+
+        mock_session = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = existing
+        mock_session.execute = AsyncMock(return_value=mock_result)
+        mock_session.flush = AsyncMock()
+
+        mock_opening_matcher = MagicMock()
+        mock_opening_matcher.match.return_value = OpeningMatch(
+            eco_code="B07",
+            name="Pirc Defense",
+            move_count=10,
+        )
+
+        service = GameReviewService(mock_session, opening_matcher=mock_opening_matcher)
+        games, new_ids = await service.create_games_from_pgn(SAMPLE_PGN_SINGLE)
+
+        assert games == [existing]
+        assert new_ids == []
+        assert existing.opening_name == "Pirc Defense"
+        assert existing.eco_code == "B07"
+        mock_session.add.assert_not_called()
 
     @pytest.mark.asyncio()
     async def test_create_games_empty_pgn(self) -> None:

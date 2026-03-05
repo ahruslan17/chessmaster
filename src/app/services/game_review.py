@@ -70,8 +70,14 @@ class GameReviewService:
         new_games: list[Game] = []
         for parsed in parsed_games:
             fingerprint = moves_fingerprint(parsed.moves)
+            opening_match = self._opening_matcher.match(parsed.moves)
             existing = await self._find_game_by_fingerprint(fingerprint)
             if existing is not None:
+                if opening_match is not None:
+                    if not existing.opening_name:
+                        existing.opening_name = opening_match.name
+                    if not existing.eco_code:
+                        existing.eco_code = opening_match.eco_code
                 db_games.append(existing)
                 logger.info(
                     "Duplicate game (fingerprint %s), reusing existing game %s",
@@ -79,7 +85,7 @@ class GameReviewService:
                     existing.id,
                 )
                 continue
-            game = _build_game_record(parsed, player_color)
+            game = _build_game_record(parsed, player_color, opening_match=opening_match)
             game.moves_fingerprint = fingerprint
             if game.id is None:
                 game.id = uuid.uuid4()

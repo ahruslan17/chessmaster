@@ -109,6 +109,11 @@ function GameRow({
   game: GameListItem;
   onSelect: () => void;
 }) {
+  const openingText =
+    game.eco_code && game.opening_name
+      ? `${game.eco_code} ${game.opening_name}`
+      : game.opening_name || game.eco_code || "—";
+
   return (
     <tr
       onClick={onSelect}
@@ -117,9 +122,7 @@ function GameRow({
       <td className="px-4 py-3 text-stone-800 dark:text-stone-200">{game.white_player || "—"}</td>
       <td className="px-4 py-3 text-stone-800 dark:text-stone-200">{game.black_player || "—"}</td>
       <td className="px-4 py-3 text-stone-600 dark:text-stone-400">{game.result}</td>
-      <td className="px-4 py-3 text-stone-600 dark:text-stone-400">
-        {game.opening_name || game.eco_code || "—"}
-      </td>
+      <td className="px-4 py-3 text-stone-600 dark:text-stone-400">{openingText}</td>
       <td className="px-4 py-3 text-stone-500">
         {game.played_at ? new Date(game.played_at).toLocaleDateString() : "—"}
       </td>
