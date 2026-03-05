@@ -1,29 +1,24 @@
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Chess } from "chess.js";
+import { CLASSIFICATION_META } from "../classification";
 import { useGame } from "../hooks/useGames";
 import { useAnalysis, useAnalysisStatus } from "../hooks/useAnalysis";
+import { AnalysisLegend } from "../components/AnalysisLegend";
 import { ChessBoard } from "../components/ChessBoard";
 import { MoveList } from "../components/MoveList";
 import { CommentaryPanel } from "../components/CommentaryPanel";
 import { EvalBar } from "../components/EvalBar";
+import { ScoringHelpDrawer } from "../components/ScoringHelpDrawer";
 
 const INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-
-const MOVE_BADGES: Record<string, { iconSrc: string; title: string }> = {
-  best: { iconSrc: "/icons/brilliant_ee.png", title: "Best move" },
-  good: { iconSrc: "/icons/good_e.png", title: "Good move" },
-  inaccuracy: { iconSrc: "/icons/inaccuracy_qe.png", title: "Inaccuracy" },
-  mistake: { iconSrc: "/icons/mistake_q.png", title: "Mistake" },
-  blunder: { iconSrc: "/icons/blunder_qq.png", title: "Blunder" },
-  theory: { iconSrc: "/icons/knowledge.png", title: "Theoretical move" },
-};
 
 export function GameViewer() {
   const { gameId } = useParams<{ gameId: string }>();
   const navigate = useNavigate();
   const [currentMoveIndex, setCurrentMoveIndex] = useState(0);
   const [autoplay, setAutoplay] = useState(false);
+  const [showScoringHelp, setShowScoringHelp] = useState(false);
 
   const { data: game, isLoading: gameLoading, error: gameError } = useGame(gameId ?? null);
   const { data: status } = useAnalysisStatus(gameId ?? null);
@@ -48,7 +43,9 @@ export function GameViewer() {
 
   const orientation = (game?.player_color === "black" ? "black" : "white") as "white" | "black";
   const maxIndex = analysis?.moves.length ?? 0;
-  const currentBadge = currentMove?.classification ? MOVE_BADGES[currentMove.classification] : null;
+  const currentBadge = currentMove?.classification
+    ? CLASSIFICATION_META[currentMove.classification as keyof typeof CLASSIFICATION_META]
+    : null;
 
   // Refetch analysis when status becomes done
   useEffect(() => {
@@ -140,7 +137,15 @@ export function GameViewer() {
             position={currentFen}
             orientation={orientation}
             lastMove={lastMoveSquares}
-            moveBadge={currentBadge && lastMoveSquares ? { ...currentBadge, square: lastMoveSquares.to } : null}
+            moveBadge={
+              currentBadge && lastMoveSquares
+                ? {
+                    square: lastMoveSquares.to,
+                    iconSrc: currentBadge.iconSrc,
+                    title: currentBadge.iconTitle,
+                  }
+                : null
+            }
             boardWidth={Math.min(560, typeof window !== "undefined" ? window.innerWidth - 320 : 560)}
           />
         </div>
@@ -188,6 +193,8 @@ export function GameViewer() {
             />
           )}
 
+          <AnalysisLegend onOpenHelp={() => setShowScoringHelp(true)} />
+
           <CommentaryPanel
             gameId={gameId}
             moveIndex={currentMoveIndex > 0 ? currentMoveIndex - 1 : null}
@@ -197,6 +204,11 @@ export function GameViewer() {
           />
         </div>
       </div>
+
+      <ScoringHelpDrawer
+        isOpen={showScoringHelp}
+        onClose={() => setShowScoringHelp(false)}
+      />
     </div>
   );
 }

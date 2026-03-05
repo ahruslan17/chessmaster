@@ -8,6 +8,7 @@ from app.utils.chess_helpers import (
     moves_to_fens,
     pv_to_san,
     score_to_centipawns,
+    win_chance_loss,
 )
 
 # ---------------------------------------------------------------------------
@@ -17,29 +18,27 @@ from app.utils.chess_helpers import (
 
 class TestClassifyMove:
     def test_best_move(self) -> None:
-        assert classify_move(0) == "best"
-        assert classify_move(5) == "best"
-        assert classify_move(9) == "best"
+        assert classify_move(0, -20, chess.WHITE) == "best"
 
     def test_good_move(self) -> None:
-        assert classify_move(10) == "good"
-        assert classify_move(20) == "good"
-        assert classify_move(29) == "good"
+        assert classify_move(0, -40, chess.WHITE) == "good"
 
     def test_inaccuracy(self) -> None:
-        assert classify_move(30) == "inaccuracy"
-        assert classify_move(40) == "inaccuracy"
-        assert classify_move(49) == "inaccuracy"
+        assert classify_move(0, -90, chess.WHITE) == "inaccuracy"
 
     def test_mistake(self) -> None:
-        assert classify_move(50) == "mistake"
-        assert classify_move(100) == "mistake"
-        assert classify_move(200) == "mistake"
-        assert classify_move(299) == "mistake"
+        assert classify_move(0, -170, chess.WHITE) == "mistake"
 
     def test_blunder(self) -> None:
-        assert classify_move(300) == "blunder"
-        assert classify_move(500) == "blunder"
+        assert classify_move(0, -300, chess.WHITE) == "blunder"
+
+    def test_black_perspective(self) -> None:
+        assert classify_move(0, 170, chess.BLACK) == "mistake"
+
+
+class TestWinChanceLoss:
+    def test_loss_is_clamped_to_non_negative(self) -> None:
+        assert win_chance_loss(0, 50, chess.WHITE) == 0.0
 
 
 # ---------------------------------------------------------------------------

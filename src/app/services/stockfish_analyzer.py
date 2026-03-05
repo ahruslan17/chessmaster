@@ -286,7 +286,11 @@ class StockfishAnalyzerService:
                     eval_before=info_before.eval_white_cp,
                     eval_after=info_after.eval_white_cp,
                     centipawn_loss=round(cp_loss, 1),
-                    classification=classify_move(cp_loss),
+                    classification=classify_move(
+                        info_before.eval_white_cp,
+                        info_after.eval_white_cp,
+                        color,
+                    ),
                     top_moves=top_moves,
                 )
             )

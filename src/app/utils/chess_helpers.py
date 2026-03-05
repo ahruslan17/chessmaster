@@ -6,39 +6,62 @@ import math
 import chess
 import chess.engine
 
-# --- Classification thresholds (centipawns) ---
-# Aligned with Lichess classic cp-based scheme (see e.g. chess.stackexchange.com/q/12451).
-# Chess.com uses stricter blunder threshold (~500 cp).
-BEST_THRESHOLD = 10
-GOOD_THRESHOLD = 30
-INACCURACY_THRESHOLD = 50
-MISTAKE_THRESHOLD = 100
-BLUNDER_THRESHOLD = 300
+# --- Classification thresholds (expected points loss / win chance loss) ---
+# Player-facing thresholds inspired by common platform UX:
+#   best      <= 0.02
+#   good      <= 0.05
+#   inaccuracy<= 0.10
+#   mistake   <= 0.20
+#   blunder    > 0.20
+BEST_LOSS_THRESHOLD = 0.02
+GOOD_LOSS_THRESHOLD = 0.05
+INACCURACY_LOSS_THRESHOLD = 0.10
+MISTAKE_LOSS_THRESHOLD = 0.20
 
 # Conventional centipawn value used to represent mate scores.
 MATE_SCORE_CP = 10_000
 
 
-def classify_move(centipawn_loss: float) -> str:
-    """Classify a move based on its centipawn loss.
+def classify_move(
+    eval_before_white_cp: float,
+    eval_after_white_cp: float,
+    color: chess.Color,
+) -> str:
+    """Classify a move by loss of win chance (expected points).
 
-    Thresholds (Lichess-style):
-      - |cp_loss| <  10  -> best
-      - |cp_loss| <  30  -> good
-      - |cp_loss| <  50  -> inaccuracy
-      - |cp_loss| < 300  -> mistake
-      - |cp_loss| >= 300 -> blunder
+    eval_before_white_cp / eval_after_white_cp are Stockfish evals from white's
+    perspective. ``color`` is the side that made the move.
     """
-    abs_loss = abs(centipawn_loss)
-    if abs_loss < BEST_THRESHOLD:
+    loss = win_chance_loss(eval_before_white_cp, eval_after_white_cp, color)
+    if loss <= BEST_LOSS_THRESHOLD:
         return "best"
-    if abs_loss < GOOD_THRESHOLD:
+    if loss <= GOOD_LOSS_THRESHOLD:
         return "good"
-    if abs_loss < INACCURACY_THRESHOLD:
+    if loss <= INACCURACY_LOSS_THRESHOLD:
         return "inaccuracy"
-    if abs_loss < BLUNDER_THRESHOLD:
+    if loss <= MISTAKE_LOSS_THRESHOLD:
         return "mistake"
     return "blunder"
+
+
+def win_chance_loss(
+    eval_before_white_cp: float,
+    eval_after_white_cp: float,
+    color: chess.Color,
+) -> float:
+    """Loss in winning chances for the side that moved, clamped to [0, 1]."""
+    if color == chess.WHITE:
+        before = win_chance_from_eval(eval_before_white_cp)
+        after = win_chance_from_eval(eval_after_white_cp)
+    else:
+        before = win_chance_from_eval(-eval_before_white_cp)
+        after = win_chance_from_eval(-eval_after_white_cp)
+    return max(0.0, before - after)
+
+
+def win_chance_from_eval(eval_white_cp: float) -> float:
+    """Convert centipawn eval to win chance in [0, 1] via logistic curve."""
+    return 1.0 / (1.0 + math.exp(-0.00368208 * eval_white_cp))
 
 
 def score_to_centipawns(pov_score: chess.engine.PovScore, color: chess.Color) -> float:

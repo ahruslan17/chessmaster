@@ -190,7 +190,7 @@ class TestStockfishAnalyzerServiceMocked:
 
     @patch("app.services.stockfish_analyzer.chess.engine.SimpleEngine.popen_uci")
     def test_analyze_detects_blunder(self, mock_popen: MagicMock) -> None:
-        """A move that drops 200 cp should be classified as a blunder."""
+        """A move with a large win-chance drop should be classified as a blunder."""
         mock_engine = MagicMock()
         mock_popen.return_value.__enter__ = MagicMock(return_value=mock_engine)
         mock_popen.return_value.__exit__ = MagicMock(return_value=False)
@@ -198,12 +198,12 @@ class TestStockfishAnalyzerServiceMocked:
         moves = [chess.Move.from_uci("e2e4")]
 
         # Position 0: eval +30 from white POV
-        # Position 1 (after e4): eval -170 from white POV
-        # PovScore(Cp(170), BLACK).pov(WHITE) = Cp(-170)
-        # cp_loss for white = 30 - (-170) = 200 → blunder
+        # Position 1 (after e4): eval -500 from white POV
+        # PovScore(Cp(500), BLACK).pov(WHITE) = Cp(-500)
+        # cp_loss for white = 30 - (-500) = 530 (large expected-points drop)
         mock_engine.analyse.side_effect = [
             [_make_mock_info(30, "d2d4", chess.WHITE)],
-            [_make_mock_info(170, "e7e5", chess.BLACK)],
+            [_make_mock_info(500, "e7e5", chess.BLACK)],
         ]
 
         analyzer = StockfishAnalyzerService(stockfish_path="/mock/stockfish", depth=10, multipv=1)
@@ -211,7 +211,7 @@ class TestStockfishAnalyzerServiceMocked:
 
         assert len(evaluations) == 1
         assert evaluations[0].classification == "blunder"
-        assert evaluations[0].centipawn_loss == 200.0
+        assert evaluations[0].centipawn_loss == 530.0
 
     @patch("app.services.stockfish_analyzer.chess.engine.SimpleEngine.popen_uci")
     def test_uses_time_limit_when_configured(self, mock_popen: MagicMock) -> None:

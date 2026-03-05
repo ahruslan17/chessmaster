@@ -1,13 +1,5 @@
 import type { MoveAnalysisRead } from "../api/types";
-
-const CLASSIFICATION_COLORS: Record<string, string> = {
-  best: "bg-chess-best/30 text-chess-best border-chess-best/50",
-  good: "bg-chess-good/30 text-chess-good border-chess-good/50",
-  theory: "bg-chess-theory/30 text-chess-theory border-chess-theory/50",
-  inaccuracy: "bg-chess-inaccuracy/30 text-chess-inaccuracy border-chess-inaccuracy/50",
-  mistake: "bg-chess-mistake/30 text-chess-mistake border-chess-mistake/50",
-  blunder: "bg-chess-blunder/30 text-chess-blunder border-chess-blunder/50",
-};
+import { CLASSIFICATION_META } from "../classification";
 
 interface MoveListProps {
   moves: MoveAnalysisRead[];
@@ -78,7 +70,7 @@ function MoveButton({
   onClick: () => void;
 }) {
   const cls = move.classification
-    ? CLASSIFICATION_COLORS[move.classification] ?? ""
+    ? CLASSIFICATION_META[move.classification as keyof typeof CLASSIFICATION_META]?.colorClass ?? ""
     : "";
 
   return (
