@@ -7,8 +7,12 @@ interface ChessBoardProps {
   position: string;
   orientation?: "white" | "black";
   lastMove?: { from: Square; to: Square } | null;
-  /** When set, show theory (book) badge in top-right of this square (e.g. last move's "to" when theory). */
-  theoryBadgeSquare?: Square | null;
+  /** When set, show a classification badge in top-right of this square. */
+  moveBadge?: {
+    square: Square;
+    iconSrc: string;
+    title: string;
+  } | null;
   boardWidth?: number;
 }
 
@@ -40,7 +44,7 @@ export function ChessBoard({
   position,
   orientation = "white",
   lastMove = null,
-  theoryBadgeSquare = null,
+  moveBadge = null,
   boardWidth = 560,
 }: ChessBoardProps) {
   const { theme } = useTheme();
@@ -64,8 +68,8 @@ export function ChessBoard({
 
   const cell = boardWidth / 8;
   let badgeStyle: React.CSSProperties | null = null;
-  if (theoryBadgeSquare) {
-    const { col, row } = squareToIndices(theoryBadgeSquare);
+  if (moveBadge) {
+    const { col, row } = squareToIndices(moveBadge.square);
     const displayCol = orientation === "black" ? 7 - col : col;
     const displayRow = orientation === "black" ? 7 - row : row;
     const left = (displayCol + 1) * cell - BADGE_SIZE;
@@ -101,9 +105,9 @@ export function ChessBoard({
       />
       {badgeStyle && (
         <img
-          src="/icons/knowledge.png"
-          alt="Theory"
-          title="Theoretical move"
+          src={moveBadge?.iconSrc}
+          alt={moveBadge?.title ?? "Move classification"}
+          title={moveBadge?.title}
           style={badgeStyle}
           className="opacity-90"
         />
