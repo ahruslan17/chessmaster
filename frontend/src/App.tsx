@@ -10,7 +10,7 @@ function ThemeToggle() {
     <button
       type="button"
       onClick={toggleTheme}
-      className="rounded-lg p-2 text-stone-500 transition hover:bg-stone-200 hover:text-stone-800 dark:text-stone-400 dark:hover:bg-stone-600 dark:hover:text-stone-100"
+      className="rounded-lg p-2 text-stone-500 transition hover:bg-stone-200 hover:text-stone-800 dark:text-stone-300 dark:hover:bg-stone-700 dark:hover:text-stone-100"
       title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
       aria-label="Toggle theme"
     >
@@ -32,8 +32,8 @@ function ThemeToggle() {
 export default function App() {
   return (
     <BrowserRouter>
-      <div className="min-h-screen">
-        <header className="border-b border-stone-300 bg-stone-200/80 px-6 py-4 dark:border-stone-600 dark:bg-chess-light/50">
+      <div className="min-h-screen bg-stone-100 text-stone-800 dark:bg-chess-dark dark:text-stone-200">
+        <header className="border-b border-stone-300 bg-stone-200/80 px-6 py-4 dark:border-stone-700 dark:bg-chess-light">
           <nav className="mx-auto flex max-w-7xl items-center justify-between">
             <Link
               to="/"
@@ -44,13 +44,13 @@ export default function App() {
             <div className="flex items-center gap-4">
               <Link
                 to="/"
-                className="text-stone-600 transition hover:text-stone-900 dark:text-stone-400 dark:hover:text-stone-100"
+                className="text-stone-600 transition hover:text-stone-900 dark:text-stone-200 dark:hover:text-stone-100"
               >
                 Games
               </Link>
               <Link
                 to="/reports"
-                className="text-stone-600 transition hover:text-stone-900 dark:text-stone-400 dark:hover:text-stone-100"
+                className="text-stone-600 transition hover:text-stone-900 dark:text-stone-200 dark:hover:text-stone-100"
               >
                 Reports
               </Link>
@@ -58,7 +58,7 @@ export default function App() {
             </div>
           </nav>
         </header>
-        <main className="mx-auto max-w-7xl px-6 py-8 bg-stone-100 dark:bg-chess-dark">
+        <main className="mx-auto max-w-7xl px-6 py-8">
           <Routes>
             <Route path="/" element={<GameLibrary />} />
             <Route path="/games/:gameId" element={<GameViewer />} />
