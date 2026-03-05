@@ -72,7 +72,10 @@ export function ScoringHelpDrawer({ isOpen, onClose }: ScoringHelpDrawerProps) {
             <section className="space-y-2">
               <p className="font-medium text-stone-700 dark:text-stone-200">Пороги</p>
               <p>
-                <code>best</code>: loss ≤ 0.02
+                <code>excellent</code>: loss ≤ 0.005 (редкий, почти компьютерный ход)
+              </p>
+              <p>
+                <code>best</code>: 0.005 &lt; loss ≤ 0.02
               </p>
               <p>
                 <code>good</code>: 0.02 &lt; loss ≤ 0.05

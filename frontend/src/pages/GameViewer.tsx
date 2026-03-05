@@ -133,58 +133,49 @@ export function GameViewer() {
             orientation={orientation}
             height={560}
           />
-          <ChessBoard
-            position={currentFen}
-            orientation={orientation}
-            lastMove={lastMoveSquares}
-            moveBadge={
-              currentBadge && lastMoveSquares
-                ? {
-                    square: lastMoveSquares.to,
-                    iconSrc: currentBadge.iconSrc,
-                    title: currentBadge.iconTitle,
-                  }
-                : null
-            }
-            boardWidth={Math.min(560, typeof window !== "undefined" ? window.innerWidth - 320 : 560)}
-          />
+
+          <div className="flex flex-col gap-3">
+            <ChessBoard
+              position={currentFen}
+              orientation={orientation}
+              lastMove={lastMoveSquares}
+              moveBadge={
+                currentBadge && lastMoveSquares
+                  ? {
+                      square: lastMoveSquares.to,
+                      iconSrc: currentBadge.iconSrc,
+                      title: currentBadge.iconTitle,
+                    }
+                  : null
+              }
+              boardWidth={Math.min(560, typeof window !== "undefined" ? window.innerWidth - 320 : 560)}
+            />
+
+            <div className="flex flex-wrap gap-2">
+              <NavButton onClick={() => goToMove(0)} disabled={currentMoveIndex === 0}>
+                ⏮ First
+              </NavButton>
+              <NavButton onClick={() => goToMove(currentMoveIndex - 1)} disabled={currentMoveIndex === 0}>
+                ← Prev
+              </NavButton>
+              <NavButton onClick={() => goToMove(currentMoveIndex + 1)} disabled={currentMoveIndex >= maxIndex}>
+                Next →
+              </NavButton>
+              <NavButton onClick={() => goToMove(maxIndex)} disabled={currentMoveIndex >= maxIndex}>
+                Last ⏭
+              </NavButton>
+              <NavButton
+                onClick={() => setAutoplay((a) => !a)}
+                disabled={currentMoveIndex >= maxIndex}
+                active={autoplay}
+              >
+                {autoplay ? "⏸ Pause" : "▶ Autoplay"}
+              </NavButton>
+            </div>
+          </div>
         </div>
 
         <div className="flex flex-1 flex-col gap-4">
-          <div className="flex flex-wrap gap-2">
-            <NavButton
-              onClick={() => goToMove(0)}
-              disabled={currentMoveIndex === 0}
-            >
-              ⏮ First
-            </NavButton>
-            <NavButton
-              onClick={() => goToMove(currentMoveIndex - 1)}
-              disabled={currentMoveIndex === 0}
-            >
-              ← Prev
-            </NavButton>
-            <NavButton
-              onClick={() => goToMove(currentMoveIndex + 1)}
-              disabled={currentMoveIndex >= maxIndex}
-            >
-              Next →
-            </NavButton>
-            <NavButton
-              onClick={() => goToMove(maxIndex)}
-              disabled={currentMoveIndex >= maxIndex}
-            >
-              Last ⏭
-            </NavButton>
-            <NavButton
-              onClick={() => setAutoplay((a) => !a)}
-              disabled={currentMoveIndex >= maxIndex}
-              active={autoplay}
-            >
-              {autoplay ? "⏸ Pause" : "▶ Autoplay"}
-            </NavButton>
-          </div>
-
           {hasAnalyzedMoves && (
             <MoveList
               moves={analysis?.moves ?? []}

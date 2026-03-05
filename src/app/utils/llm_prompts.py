@@ -20,7 +20,7 @@ SINGLE_MOVE_COMMENTARY_SYSTEM = (
     "No JSON, no markdown fences, no preamble. "
     "For 'theory' moves (opening book): explain why this move is played and what "
     "it aims to achieve; do NOT suggest a best move or alternative. "
-    "For best/good moves: brief positive reinforcement. "
+    "For excellent/best/good moves: brief positive reinforcement. "
     "For inaccuracies/mistakes/blunders: explain the error and better alternative. "
     "Use both engine lines and the real game continuation to explain long-term impact.\n"
 )
@@ -33,8 +33,9 @@ MOVE_COMMENTARY_SYSTEM = (
     '- For "theory" moves (opening book): explain why this move is played, what '
     "ideas it supports, and what it aims to achieve. Do NOT suggest a best move "
     "or alternative — this is known theory. Focus on the rationale and benefits.\n"
-    '- For "best" moves: 1 brief sentence of positive reinforcement.\n'
-    '- For "good" moves: 1-2 sentences noting it is a solid choice.\n'
+    '- For "excellent" moves: 1 brief sentence noting this is near-perfect and rare.\n'
+    '- For "best" moves: 1 brief sentence of positive reinforcement (very strong move).\n'
+    '- For "good" moves: 1-2 sentences noting it is a decent practical choice.\n'
     '- For "inaccuracy" moves: 2-3 sentences explaining the slight inaccuracy '
     "and the better alternative.\n"
     '- For "mistake" moves: 3-4 sentences with a clear explanation of the error, '

@@ -8,11 +8,13 @@ import chess.engine
 
 # --- Classification thresholds (expected points loss / win chance loss) ---
 # Player-facing thresholds inspired by common platform UX:
+#   excellent <= 0.005  (very rare, near-perfect / engine-like)
 #   best      <= 0.02
 #   good      <= 0.05
 #   inaccuracy<= 0.10
 #   mistake   <= 0.20
 #   blunder    > 0.20
+EXCELLENT_LOSS_THRESHOLD = 0.005
 BEST_LOSS_THRESHOLD = 0.02
 GOOD_LOSS_THRESHOLD = 0.05
 INACCURACY_LOSS_THRESHOLD = 0.10
@@ -33,6 +35,8 @@ def classify_move(
     perspective. ``color`` is the side that made the move.
     """
     loss = win_chance_loss(eval_before_white_cp, eval_after_white_cp, color)
+    if loss <= EXCELLENT_LOSS_THRESHOLD:
+        return "excellent"
     if loss <= BEST_LOSS_THRESHOLD:
         return "best"
     if loss <= GOOD_LOSS_THRESHOLD:

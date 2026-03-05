@@ -13,6 +13,7 @@ export default {
           light: "#3d3d3d",
           highlight: "#4a7c59",
           best: "#22c55e",
+          excellent: "#10b981",
           good: "#84cc16",
           theory: "#3b82f6",
           inaccuracy: "#eab308",

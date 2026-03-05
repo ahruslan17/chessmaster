@@ -1,5 +1,6 @@
 export type MoveClassification =
   | "best"
+  | "excellent"
   | "good"
   | "theory"
   | "inaccuracy"
@@ -17,8 +18,14 @@ export const CLASSIFICATION_META: Record<MoveClassification, ClassificationMeta>
   best: {
     label: "Best",
     colorClass: "bg-chess-best/30 text-chess-best border-chess-best/50",
-    iconSrc: "/icons/brilliant_ee.png",
+    iconSrc: "/icons/star_s.png",
     iconTitle: "Best move",
+  },
+  excellent: {
+    label: "Excellent",
+    colorClass: "bg-chess-excellent/30 text-chess-excellent border-chess-excellent/50",
+    iconSrc: "/icons/brilliant_ee.png",
+    iconTitle: "Excellent move",
   },
   good: {
     label: "Good",
@@ -53,6 +60,7 @@ export const CLASSIFICATION_META: Record<MoveClassification, ClassificationMeta>
 };
 
 export const CLASSIFICATION_ORDER: MoveClassification[] = [
+  "excellent",
   "best",
   "good",
   "theory",

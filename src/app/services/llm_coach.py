@@ -36,7 +36,7 @@ class MoveCommentaryInput:
     eval_before: float  # centipawns from white's perspective
     eval_after: float  # centipawns from white's perspective
     centipawn_loss: float  # always >= 0
-    classification: str  # best / good / inaccuracy / mistake / blunder
+    classification: str  # excellent / best / good / inaccuracy / mistake / blunder
     top_moves: list[dict[str, object]] = field(default_factory=list)
     next_game_moves: list[str] = field(default_factory=list)
 

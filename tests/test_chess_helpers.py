@@ -18,7 +18,10 @@ from app.utils.chess_helpers import (
 
 class TestClassifyMove:
     def test_best_move(self) -> None:
-        assert classify_move(0, -20, chess.WHITE) == "best"
+        assert classify_move(0, -15, chess.WHITE) == "best"
+
+    def test_excellent_move(self) -> None:
+        assert classify_move(0, -5, chess.WHITE) == "excellent"
 
     def test_good_move(self) -> None:
         assert classify_move(0, -40, chess.WHITE) == "good"
