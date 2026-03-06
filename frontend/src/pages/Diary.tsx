@@ -158,12 +158,16 @@ export function Diary() {
                         : "border-stone-300 bg-stone-100/60 hover:bg-stone-100 dark:border-stone-600 dark:bg-chess-dark/30 dark:hover:bg-chess-dark/50"
                     }`}
                   >
-                    <p className="text-sm font-medium text-stone-800 dark:text-stone-100">
-                      {game.white_player} vs {game.black_player}
-                    </p>
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-sm font-medium text-stone-800 dark:text-stone-100">
+                        {game.white_player} vs {game.black_player}
+                      </p>
+                      <span className="shrink-0 rounded border border-stone-400/80 bg-stone-100 px-2 py-0.5 text-xs font-semibold text-stone-700 dark:border-stone-500 dark:bg-chess-dark/70 dark:text-stone-200">
+                        {formatDate(game.played_at)}
+                      </span>
+                    </div>
                     <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">
-                      {game.result} • {game.opening_name ?? "Без дебюта"} •{" "}
-                      {formatDate(game.played_at)}
+                      {game.result} • {game.opening_name ?? "Без дебюта"}
                     </p>
                   </button>
                 ))

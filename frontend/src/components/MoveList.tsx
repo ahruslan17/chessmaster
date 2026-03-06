@@ -37,14 +37,14 @@ export function MoveList({
         <span className="text-xs text-stone-500 dark:text-stone-400">{moves.length} полуходов</span>
       </div>
 
-      <div className="max-h-72 overflow-y-auto px-3 py-3">
-        <div className="flex flex-wrap gap-x-3 gap-y-2">
+      <div className="max-h-72 overflow-y-auto px-2.5 py-2.5">
+        <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 lg:grid-cols-4">
           {grouped.map(({ moveNumber, white, black }) => (
             <div
               key={moveNumber}
-              className="inline-flex items-center gap-1.5 rounded-md border border-stone-300/70 bg-stone-100/60 px-2 py-1 dark:border-stone-600/50 dark:bg-chess-dark/20"
+              className="inline-flex items-center gap-1 rounded-md border border-stone-300/70 bg-stone-100/60 px-1.5 py-0.5 dark:border-stone-600/50 dark:bg-chess-dark/20"
             >
-              <span className="min-w-7 text-right text-sm font-medium text-stone-500 dark:text-stone-400">
+              <span className="min-w-5 text-right text-xs font-medium text-stone-500 dark:text-stone-400">
                 {moveNumber}.
               </span>
 
@@ -91,7 +91,7 @@ function MoveChip({
       type="button"
       onClick={onClick}
       title={cp ? `${move.move_san}  -  ${cp}` : move.move_san}
-      className={`rounded-md border px-2.5 py-1 text-[0.95rem] font-semibold tracking-tight transition ${
+      className={`rounded-md border px-2 py-0.5 text-sm font-semibold tracking-tight transition ${
         isActive
           ? "ring-2 ring-chess-highlight ring-offset-1 ring-offset-stone-100 dark:ring-offset-chess-dark"
           : "hover:brightness-110"
