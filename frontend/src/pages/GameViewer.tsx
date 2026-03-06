@@ -43,6 +43,10 @@ export function GameViewer() {
 
   const orientation = (game?.player_color === "black" ? "black" : "white") as "white" | "black";
   const maxIndex = analysis?.moves.length ?? 0;
+  const boardSize = Math.min(
+    620,
+    typeof window !== "undefined" ? window.innerWidth - 360 : 620
+  );
   const currentBadge = currentMove?.classification
     ? CLASSIFICATION_META[currentMove.classification as keyof typeof CLASSIFICATION_META]
     : null;
@@ -131,7 +135,7 @@ export function GameViewer() {
           <EvalBar
             evalCentipawns={evalCp}
             orientation={orientation}
-            height={560}
+            height={boardSize}
           />
 
           <div className="flex flex-col gap-3">
@@ -148,10 +152,10 @@ export function GameViewer() {
                     }
                   : null
               }
-              boardWidth={Math.min(560, typeof window !== "undefined" ? window.innerWidth - 320 : 560)}
+              boardWidth={boardSize}
             />
 
-            <div className="flex flex-wrap gap-2">
+            <div className="grid grid-cols-5 gap-2">
               <NavButton onClick={() => goToMove(0)} disabled={currentMoveIndex === 0}>
                 ⏮ В начало
               </NavButton>
@@ -220,7 +224,7 @@ function NavButton({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className={`rounded px-3 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-40 ${
+      className={`whitespace-nowrap rounded px-2 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-40 ${
         active
           ? "bg-chess-highlight text-stone-100"
           : "bg-stone-300 text-stone-700 hover:bg-stone-400 disabled:hover:bg-stone-300 dark:bg-stone-600/50 dark:text-stone-300 dark:hover:bg-stone-600 dark:disabled:hover:bg-stone-600/50"

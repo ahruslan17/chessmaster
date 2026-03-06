@@ -47,6 +47,7 @@ export function ChessBoard({
   moveBadge = null,
   boardWidth = 560,
 }: ChessBoardProps) {
+  const frameSize = boardWidth + 8;
   const { theme } = useTheme();
   const colors = theme === "dark" ? SQUARE_COLORS_DARK : SQUARE_COLORS_LIGHT;
 
@@ -86,13 +87,16 @@ export function ChessBoard({
   }
 
   return (
-    <div className="relative overflow-hidden rounded-lg border border-stone-400 shadow-xl dark:border-stone-600">
+    <div
+      className="relative flex items-center justify-center overflow-hidden rounded-md border-2 border-stone-400 shadow-xl dark:border-stone-600"
+      style={{ width: frameSize, height: frameSize }}
+    >
       <Chessboard
         position={position}
         boardOrientation={orientation}
         boardWidth={boardWidth}
         customBoardStyle={{
-          borderRadius: "4px",
+          borderRadius: "0px",
         }}
         customDarkSquareStyle={{ backgroundColor: colors.dark }}
         customLightSquareStyle={{ backgroundColor: colors.light }}

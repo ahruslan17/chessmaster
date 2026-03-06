@@ -9,11 +9,10 @@ function clampEval(cp: number): number {
   return capped;
 }
 
-function toPercent(cp: number, orientation: "white" | "black"): number {
+function toPercent(cp: number): number {
   const clamped = clampEval(cp);
   // Map -500..500 to 0..100. 0 = black winning, 100 = white winning
-  const pct = ((clamped + 500) / 1000) * 100;
-  return orientation === "black" ? 100 - pct : pct;
+  return ((clamped + 500) / 1000) * 100;
 }
 
 export function EvalBar({
@@ -21,21 +20,25 @@ export function EvalBar({
   orientation = "white",
   height = 120,
 }: EvalBarProps) {
-  const pct = toPercent(evalCentipawns, orientation);
+  const pct = toPercent(evalCentipawns);
   const display =
     Math.abs(evalCentipawns) >= 1000
       ? `M${Math.abs(Math.round(evalCentipawns / 1000))}`
       : (evalCentipawns / 100).toFixed(1);
+  const whiteFillStyle =
+    orientation === "black"
+      ? { height: `${pct}%`, top: 0 }
+      : { height: `${pct}%`, bottom: 0 };
 
   return (
     <div className="flex flex-col items-center gap-1">
       <div
-        className="relative w-5 overflow-hidden rounded border border-stone-400 bg-stone-300 dark:border-stone-600 dark:bg-stone-800"
+        className="relative w-5 overflow-hidden rounded border border-stone-500/80 bg-black"
         style={{ height }}
       >
         <div
-          className="absolute bottom-0 left-0 right-0 bg-stone-700 transition-all duration-200 dark:bg-stone-100"
-          style={{ height: `${pct}%` }}
+          className="absolute left-0 right-0 bg-white transition-all duration-200"
+          style={whiteFillStyle}
         />
       </div>
       <span className="text-xs text-stone-500 dark:text-stone-400">{display}</span>
