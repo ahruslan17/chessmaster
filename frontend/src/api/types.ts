@@ -69,6 +69,7 @@ export interface ReportRead {
 }
 
 export interface OpeningRead {
+  id: string;
   eco_code: string;
   name: string;
   moves_san: string[];

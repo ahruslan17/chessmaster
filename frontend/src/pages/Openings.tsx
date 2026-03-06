@@ -37,7 +37,7 @@ export function Openings() {
   useEffect(() => {
     setCurrentMoveIndex(0);
     setAutoplay(false);
-  }, [selectedOpening?.eco_code, selectedOpening?.name]);
+  }, [selectedOpening?.id]);
 
   useEffect(() => {
     if (!autoplay || safeIndex >= maxIndex) {
@@ -79,13 +79,11 @@ export function Openings() {
             ) : (
               filteredOpenings.map((opening) => {
                 const isActive =
-                  selectedOpening?.eco_code === opening.eco_code &&
-                  selectedOpening?.name === opening.name &&
-                  selectedOpening?.move_count === opening.move_count;
+                  selectedOpening?.id === opening.id;
 
                 return (
                   <button
-                    key={`${opening.eco_code}-${opening.name}-${opening.move_count}`}
+                    key={opening.id}
                     type="button"
                     onClick={() => setSelectedOpening(opening)}
                     className={`w-full rounded border px-3 py-2 text-left transition ${

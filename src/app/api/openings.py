@@ -18,11 +18,12 @@ async def list_openings(
     query = q.strip().lower() if q else None
     rows: list[OpeningRead] = []
 
-    for moves_san, eco_code, name in _opening_matcher.list_openings():
+    for index, (moves_san, eco_code, name) in enumerate(_opening_matcher.list_openings()):
         if query and query not in f"{eco_code} {name}".lower():
             continue
         rows.append(
             OpeningRead(
+                id=f"{eco_code}-{index}",
                 eco_code=eco_code,
                 name=name,
                 moves_san=moves_san,
