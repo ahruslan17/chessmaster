@@ -11,8 +11,8 @@ function ThemeToggle() {
       type="button"
       onClick={toggleTheme}
       className="rounded-lg p-2 text-stone-500 transition hover:bg-stone-200 hover:text-stone-800 dark:text-stone-300 dark:hover:bg-stone-700 dark:hover:text-stone-100"
-      title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-      aria-label="Toggle theme"
+      title={theme === "dark" ? "Переключить на светлую тему" : "Переключить на темную тему"}
+      aria-label="Переключить тему"
     >
       {theme === "dark" ? (
         /* Sun: switch to light theme */
@@ -46,13 +46,13 @@ export default function App() {
                 to="/"
                 className="text-stone-600 transition hover:text-stone-900 dark:text-stone-200 dark:hover:text-stone-100"
               >
-                Games
+                Партии
               </Link>
               <Link
                 to="/reports"
                 className="text-stone-600 transition hover:text-stone-900 dark:text-stone-200 dark:hover:text-stone-100"
               >
-                Reports
+                Отчеты
               </Link>
               <ThemeToggle />
             </div>

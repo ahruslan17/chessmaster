@@ -33,7 +33,7 @@ async def upload_pgn(
     """
     raw = await file.read()
     if len(raw) > _MAX_UPLOAD_SIZE:
-        raise HTTPException(status_code=413, detail="File exceeds 10 MB limit")
+        raise HTTPException(status_code=413, detail="Размер файла превышает лимит 10 МБ")
 
     try:
         pgn_text = raw.decode("utf-8")
@@ -42,7 +42,7 @@ async def upload_pgn(
         pgn_text = raw.decode("latin-1")
 
     if not pgn_text.strip():
-        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+        raise HTTPException(status_code=400, detail="Загруженный файл пуст")
 
     service = GameReviewService(session)
     games, new_game_ids = await service.create_games_from_pgn(
@@ -50,7 +50,7 @@ async def upload_pgn(
     )
 
     if not games:
-        raise PGNParseError("No valid games found in the PGN file")
+        raise PGNParseError("В PGN-файле не найдено корректных партий")
 
     await session.commit()
 
@@ -73,10 +73,10 @@ async def import_pgn_text(
     """
     pgn_text = body.pgn_text.strip()
     if not pgn_text:
-        raise HTTPException(status_code=400, detail="PGN text is empty")
+        raise HTTPException(status_code=400, detail="Текст PGN пуст")
 
     if len(pgn_text.encode("utf-8")) > _MAX_UPLOAD_SIZE:
-        raise HTTPException(status_code=413, detail="PGN text exceeds 10 MB limit")
+        raise HTTPException(status_code=413, detail="Размер текста PGN превышает лимит 10 МБ")
 
     player_color = body.player_color if body.player_color in ("white", "black") else None
 
@@ -86,7 +86,7 @@ async def import_pgn_text(
     )
 
     if not games:
-        raise PGNParseError("No valid games found in the PGN text")
+        raise PGNParseError("В тексте PGN не найдено корректных партий")
 
     await session.commit()
 
@@ -140,5 +140,5 @@ async def get_game(
     """Get a single game by ID."""
     game = await session.get(Game, game_id)
     if game is None:
-        raise GameNotFoundError("Game not found")
+        raise GameNotFoundError("Партия не найдена")
     return game

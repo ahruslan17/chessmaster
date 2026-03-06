@@ -9,14 +9,14 @@ export function AnalysisLegend({ onOpenHelp }: AnalysisLegendProps) {
     <div className="rounded-lg border border-stone-300 bg-stone-200/40 px-3 py-2.5 dark:border-stone-600 dark:bg-chess-light/20">
       <div className="mb-2 flex items-center justify-between gap-3">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-stone-500 dark:text-stone-400">
-          Legend
+          Легенда
         </h3>
         <button
           type="button"
           onClick={onOpenHelp}
           className="rounded border border-stone-400 px-2 py-0.5 text-[11px] text-stone-600 transition hover:bg-stone-300 dark:border-stone-500/50 dark:text-stone-300 dark:hover:bg-stone-600/50"
         >
-          Scoring
+          Оценка
         </button>
       </div>
 

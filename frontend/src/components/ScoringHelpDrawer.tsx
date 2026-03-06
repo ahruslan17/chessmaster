@@ -8,8 +8,8 @@ interface ScoringHelpDrawerProps {
 export function ScoringHelpDrawer({ isOpen, onClose }: ScoringHelpDrawerProps) {
   useEffect(() => {
     if (!isOpen) return;
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -56,13 +56,13 @@ export function ScoringHelpDrawer({ isOpen, onClose }: ScoringHelpDrawerProps) {
             </section>
 
             <section className="space-y-2">
-              <p className="font-medium text-stone-700 dark:text-stone-200">Шаги расчёта</p>
-              <p>1. Движок даёт eval до и после хода (в centipawn, с точки зрения белых).</p>
+              <p className="font-medium text-stone-700 dark:text-stone-200">Шаги расчета</p>
+              <p>1. Движок дает eval до и после хода (в centipawn, с точки зрения белых).</p>
               <p>
                 2. Eval переводится в шанс через логистику:{" "}
                 <code>P = 1 / (1 + exp(-0.00368208 * eval_cp))</code>.
               </p>
-              <p>3. Для чёрных берётся обратная перспектива (меняется знак eval).</p>
+              <p>3. Для черных берется обратная перспектива (меняется знак eval).</p>
               <p>
                 4. Потеря шанса: <code>loss = max(0, P_before - P_after)</code>.
               </p>
@@ -72,19 +72,19 @@ export function ScoringHelpDrawer({ isOpen, onClose }: ScoringHelpDrawerProps) {
             <section className="space-y-2">
               <p className="font-medium text-stone-700 dark:text-stone-200">Пороги</p>
               <p>
-                <code>excellent</code>: loss ≤ 0.005 (редкий, почти компьютерный ход)
+                <code>excellent</code>: loss &lt;= 0.005 (редкий, почти компьютерный ход)
               </p>
               <p>
-                <code>best</code>: 0.005 &lt; loss ≤ 0.02
+                <code>best</code>: 0.005 &lt; loss &lt;= 0.02
               </p>
               <p>
-                <code>good</code>: 0.02 &lt; loss ≤ 0.05
+                <code>good</code>: 0.02 &lt; loss &lt;= 0.05
               </p>
               <p>
-                <code>inaccuracy</code>: 0.05 &lt; loss ≤ 0.10
+                <code>inaccuracy</code>: 0.05 &lt; loss &lt;= 0.10
               </p>
               <p>
-                <code>mistake</code>: 0.10 &lt; loss ≤ 0.20
+                <code>mistake</code>: 0.10 &lt; loss &lt;= 0.20
               </p>
               <p>
                 <code>blunder</code>: loss &gt; 0.20
@@ -94,8 +94,8 @@ export function ScoringHelpDrawer({ isOpen, onClose }: ScoringHelpDrawerProps) {
             <section className="rounded border border-stone-300 bg-stone-200/60 p-3 dark:border-stone-600 dark:bg-chess-light/30">
               <p className="font-medium text-stone-700 dark:text-stone-200">Особый случай</p>
               <p className="mt-2">
-                <code>theory</code> ставится отдельно по дебютной базе (opening book) и
-                не зависит от порогов выше.
+                <code>theory</code> ставится отдельно по дебютной базе (opening book) и не
+                зависит от порогов выше.
               </p>
             </section>
           </div>

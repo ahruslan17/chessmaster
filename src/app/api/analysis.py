@@ -35,7 +35,7 @@ async def get_game_analysis(
     # Verify the game exists
     game = await session.get(Game, game_id)
     if game is None:
-        raise GameNotFoundError("Game not found")
+        raise GameNotFoundError("Партия не найдена")
 
     stmt = (
         select(GameAnalysis)
@@ -46,7 +46,7 @@ async def get_game_analysis(
     analysis = result.scalar_one_or_none()
 
     if analysis is None:
-        raise AnalysisNotFoundError("Analysis not found for this game")
+        raise AnalysisNotFoundError("Анализ для этой партии не найден")
 
     # Sort moves: by move_number ascending, white before black
     analysis.moves.sort(key=lambda m: (m.move_number, m.color != "white"))
@@ -67,11 +67,11 @@ async def stream_move_commentary(
     or for real-time display.
     """
     if move_index < 0:
-        raise AnalysisNotFoundError("Move index must be non-negative")
+        raise AnalysisNotFoundError("Индекс хода не может быть отрицательным")
 
     game = await session.get(Game, game_id)
     if game is None:
-        raise GameNotFoundError("Game not found")
+        raise GameNotFoundError("Партия не найдена")
 
     stmt = (
         select(GameAnalysis)
@@ -81,12 +81,12 @@ async def stream_move_commentary(
     result = await session.execute(stmt)
     analysis = result.scalar_one_or_none()
     if analysis is None:
-        raise AnalysisNotFoundError("Analysis not found for this game")
+        raise AnalysisNotFoundError("Анализ для этой партии не найден")
 
     # Sort moves to match frontend order
     moves_sorted = sorted(analysis.moves, key=lambda m: (m.move_number, m.color != "white"))
     if move_index >= len(moves_sorted):
-        raise AnalysisNotFoundError("Move index out of range")
+        raise AnalysisNotFoundError("Индекс хода вне диапазона")
 
     move_record = moves_sorted[move_index]
     if move_record.llm_comment:
@@ -108,7 +108,7 @@ async def stream_move_commentary(
     parser = PGNParserService()
     parsed = parser.parse_pgn(game.pgn_text)
     if not parsed:
-        raise AnalysisNotFoundError("Could not parse game PGN for commentary")
+        raise AnalysisNotFoundError("Не удалось разобрать PGN партии для комментария")
     fens = moves_to_fens(parsed[0].moves)
     fen_before = fens[move_index] if move_index < len(fens) else ""
 

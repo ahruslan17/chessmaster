@@ -25,12 +25,12 @@ export function GameLibrary() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold text-stone-800 dark:text-stone-100">Game Library</h1>
+        <h1 className="text-2xl font-semibold text-stone-800 dark:text-stone-100">Библиотека партий</h1>
         <button
-          onClick={() => setShowUpload((s) => !s)}
+          onClick={() => setShowUpload((show) => !show)}
           className="rounded bg-chess-highlight px-4 py-2 font-medium text-stone-100 transition hover:bg-chess-highlight/80"
         >
-          {showUpload ? "Cancel" : "Upload PGN"}
+          {showUpload ? "Отмена" : "Загрузить PGN"}
         </button>
       </div>
 
@@ -40,41 +40,41 @@ export function GameLibrary() {
 
       <div className="flex flex-wrap gap-4">
         <div>
-          <label className="mb-1 block text-sm text-stone-500">Result</label>
+          <label className="mb-1 block text-sm text-stone-500">Результат</label>
           <select
             value={resultFilter}
-            onChange={(e) => setResultFilter(e.target.value)}
+            onChange={(event) => setResultFilter(event.target.value)}
             className="rounded border border-stone-400 bg-white px-3 py-2 text-stone-800 focus:border-chess-highlight focus:outline-none dark:border-stone-600 dark:bg-chess-dark dark:text-stone-200"
           >
-            <option value="">All</option>
-            <option value="1-0">1-0 (White wins)</option>
-            <option value="0-1">0-1 (Black wins)</option>
-            <option value="1/2-1/2">1/2-1/2 (Draw)</option>
-            <option value="*">* (Ongoing)</option>
+            <option value="">Все</option>
+            <option value="1-0">1-0 (Победа белых)</option>
+            <option value="0-1">0-1 (Победа черных)</option>
+            <option value="1/2-1/2">1/2-1/2 (Ничья)</option>
+            <option value="*">* (Без результата)</option>
           </select>
         </div>
         <div>
-          <label className="mb-1 block text-sm text-stone-500">Opening</label>
+          <label className="mb-1 block text-sm text-stone-500">Дебют</label>
           <input
             type="text"
             value={openingFilter}
-            onChange={(e) => setOpeningFilter(e.target.value)}
-            placeholder="Filter by opening..."
+            onChange={(event) => setOpeningFilter(event.target.value)}
+            placeholder="Фильтр по дебюту..."
             className="rounded border border-stone-400 bg-white px-3 py-2 text-stone-800 placeholder-stone-500 focus:border-chess-highlight focus:outline-none dark:border-stone-600 dark:bg-chess-dark dark:text-stone-200"
           />
         </div>
       </div>
 
       {isLoading ? (
-        <p className="py-8 text-center text-stone-500">Loading games...</p>
+        <p className="py-8 text-center text-stone-500">Загрузка партий...</p>
       ) : games.length === 0 ? (
         <div className="rounded-lg border border-stone-300 bg-stone-200/50 py-12 text-center dark:border-stone-600 dark:bg-chess-light/20">
-          <p className="text-stone-600 dark:text-stone-500">No games yet. Upload a PGN file to get started.</p>
+          <p className="text-stone-600 dark:text-stone-500">Пока нет партий. Загрузите PGN, чтобы начать.</p>
           <button
             onClick={() => setShowUpload(true)}
             className="mt-4 text-chess-highlight hover:underline"
           >
-            Upload PGN
+            Загрузить PGN
           </button>
         </div>
       ) : (
@@ -82,17 +82,17 @@ export function GameLibrary() {
           <table className="w-full">
             <thead>
               <tr className="border-b border-stone-300 bg-stone-200/80 dark:border-stone-600 dark:bg-chess-light/50">
-                <th className="px-4 py-3 text-left text-sm font-medium text-stone-600 dark:text-stone-400">White</th>
-                <th className="px-4 py-3 text-left text-sm font-medium text-stone-600 dark:text-stone-400">Black</th>
-                <th className="px-4 py-3 text-left text-sm font-medium text-stone-600 dark:text-stone-400">Result</th>
-                <th className="px-4 py-3 text-left text-sm font-medium text-stone-600 dark:text-stone-400">Opening</th>
-                <th className="px-4 py-3 text-left text-sm font-medium text-stone-600 dark:text-stone-400">Date</th>
+                <th className="px-4 py-3 text-left text-sm font-medium text-stone-600 dark:text-stone-400">Белые</th>
+                <th className="px-4 py-3 text-left text-sm font-medium text-stone-600 dark:text-stone-400">Черные</th>
+                <th className="px-4 py-3 text-left text-sm font-medium text-stone-600 dark:text-stone-400">Результат</th>
+                <th className="px-4 py-3 text-left text-sm font-medium text-stone-600 dark:text-stone-400">Дебют</th>
+                <th className="px-4 py-3 text-left text-sm font-medium text-stone-600 dark:text-stone-400">Дата</th>
                 <th className="px-4 py-3" />
               </tr>
             </thead>
             <tbody>
-              {games.map((g) => (
-                <GameRow key={g.id} game={g} onSelect={() => navigate(`/games/${g.id}`)} />
+              {games.map((game) => (
+                <GameRow key={game.id} game={game} onSelect={() => navigate(`/games/${game.id}`)} />
               ))}
             </tbody>
           </table>
@@ -112,29 +112,29 @@ function GameRow({
   const openingText =
     game.eco_code && game.opening_name
       ? `${game.eco_code}: ${game.opening_name}`
-      : game.opening_name || game.eco_code || "—";
+      : game.opening_name || game.eco_code || "-";
 
   return (
     <tr
       onClick={onSelect}
       className="cursor-pointer border-b border-stone-200 transition hover:bg-stone-100 dark:border-stone-600/50 dark:hover:bg-chess-light/30"
     >
-      <td className="px-4 py-3 text-stone-800 dark:text-stone-200">{game.white_player || "—"}</td>
-      <td className="px-4 py-3 text-stone-800 dark:text-stone-200">{game.black_player || "—"}</td>
+      <td className="px-4 py-3 text-stone-800 dark:text-stone-200">{game.white_player || "-"}</td>
+      <td className="px-4 py-3 text-stone-800 dark:text-stone-200">{game.black_player || "-"}</td>
       <td className="px-4 py-3 text-stone-600 dark:text-stone-400">{game.result}</td>
       <td className="px-4 py-3 text-stone-600 dark:text-stone-400">{openingText}</td>
       <td className="px-4 py-3 text-stone-500">
-        {game.played_at ? new Date(game.played_at).toLocaleDateString() : "—"}
+        {game.played_at ? new Date(game.played_at).toLocaleDateString() : "-"}
       </td>
       <td className="px-4 py-3">
         <button
-          onClick={(e) => {
-            e.stopPropagation();
+          onClick={(event) => {
+            event.stopPropagation();
             onSelect();
           }}
           className="text-chess-highlight hover:underline"
         >
-          View
+          Открыть
         </button>
       </td>
     </tr>

@@ -33,8 +33,8 @@ export function MoveList({
   return (
     <div className="overflow-hidden rounded-lg border border-stone-300 bg-stone-200/50 dark:border-stone-600 dark:bg-chess-light/30">
       <div className="flex items-center justify-between border-b border-stone-300 px-3 py-2 dark:border-stone-600">
-        <h3 className="text-sm font-semibold text-stone-600 dark:text-stone-300">Moves</h3>
-        <span className="text-xs text-stone-500 dark:text-stone-400">{moves.length} plies</span>
+        <h3 className="text-sm font-semibold text-stone-600 dark:text-stone-300">Ходы</h3>
+        <span className="text-xs text-stone-500 dark:text-stone-400">{moves.length} полуходов</span>
       </div>
 
       <div className="max-h-72 overflow-y-auto px-3 py-3">

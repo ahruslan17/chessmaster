@@ -29,7 +29,7 @@ async def create_report(
     patterns, and strength patterns.
     """
     if body.period_end < body.period_start:
-        raise HTTPException(status_code=422, detail="period_end must be on or after period_start")
+        raise HTTPException(status_code=422, detail="Дата конца периода должна быть не раньше даты начала")
 
     report = await report_service.generate_report(
         period_start=body.period_start,
@@ -75,5 +75,5 @@ async def get_report(
     """Get a previously generated report."""
     report = await session.get(PeriodReport, report_id)
     if report is None:
-        raise ReportNotFoundError("Report not found")
+        raise ReportNotFoundError("Отчет не найден")
     return report

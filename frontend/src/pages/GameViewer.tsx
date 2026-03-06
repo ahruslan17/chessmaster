@@ -60,7 +60,7 @@ export function GameViewer() {
       setAutoplay(false);
       return;
     }
-    const t = setTimeout(() => setCurrentMoveIndex((i) => i + 1), 800);
+    const t = setTimeout(() => setCurrentMoveIndex((index) => index + 1), 800);
     return () => clearTimeout(t);
   }, [autoplay, currentMoveIndex, maxIndex]);
 
@@ -71,7 +71,7 @@ export function GameViewer() {
   if (gameLoading || !gameId) {
     return (
       <div className="flex items-center justify-center py-12">
-        <p className="text-stone-600 dark:text-stone-500">Loading game...</p>
+        <p className="text-stone-600 dark:text-stone-500">Загрузка партии...</p>
       </div>
     );
   }
@@ -79,12 +79,12 @@ export function GameViewer() {
   if (gameError || !game) {
     return (
       <div className="py-12 text-center">
-        <p className="text-red-400">Game not found</p>
+        <p className="text-red-400">Партия не найдена</p>
         <button
           onClick={() => navigate("/")}
           className="mt-4 text-chess-highlight hover:underline dark:text-chess-highlight"
         >
-          Back to games
+          Назад к партиям
         </button>
       </div>
     );
@@ -101,14 +101,14 @@ export function GameViewer() {
           onClick={() => navigate("/")}
           className="text-stone-600 transition hover:text-stone-900 dark:text-stone-400 dark:hover:text-stone-100"
         >
-          ← Back to games
+          {"← Назад к партиям"}
         </button>
         <div className="text-center">
           <h1 className="text-lg font-semibold text-stone-800 dark:text-stone-100">
             {game.white_player} vs {game.black_player}
           </h1>
           <p className="text-sm text-stone-500 dark:text-stone-400">
-            {game.result} {game.opening_name ? `• ${game.opening_name}` : ""}
+            {game.result} {game.opening_name ? ` - ${game.opening_name}` : ""}
           </p>
         </div>
         <div className="w-24" />
@@ -116,13 +116,13 @@ export function GameViewer() {
 
       {isAnalyzing && (
         <div className="rounded-lg border border-chess-inaccuracy/50 bg-chess-inaccuracy/10 px-4 py-2 text-sm text-chess-inaccuracy">
-          Analysis in progress... This may take a few minutes.
+          Анализ выполняется... Это может занять несколько минут.
         </div>
       )}
 
       {analysisFailed && (
         <div className="rounded-lg border border-red-400/50 bg-red-500/10 px-4 py-2 text-sm text-red-400">
-          Analysis failed. Please re-upload the game or try again later.
+          Не удалось завершить анализ. Попробуйте загрузить партию заново или позже.
         </div>
       )}
 
@@ -153,23 +153,23 @@ export function GameViewer() {
 
             <div className="flex flex-wrap gap-2">
               <NavButton onClick={() => goToMove(0)} disabled={currentMoveIndex === 0}>
-                ⏮ First
+                ⏮ В начало
               </NavButton>
               <NavButton onClick={() => goToMove(currentMoveIndex - 1)} disabled={currentMoveIndex === 0}>
-                ← Prev
+                ← Назад
               </NavButton>
               <NavButton onClick={() => goToMove(currentMoveIndex + 1)} disabled={currentMoveIndex >= maxIndex}>
-                Next →
+                Вперед →
               </NavButton>
               <NavButton onClick={() => goToMove(maxIndex)} disabled={currentMoveIndex >= maxIndex}>
-                Last ⏭
+                В конец ⏭
               </NavButton>
               <NavButton
-                onClick={() => setAutoplay((a) => !a)}
+                onClick={() => setAutoplay((value) => !value)}
                 disabled={currentMoveIndex >= maxIndex}
                 active={autoplay}
               >
-                {autoplay ? "⏸ Pause" : "▶ Autoplay"}
+                {autoplay ? "⏸ Пауза" : "▶ Автоплей"}
               </NavButton>
             </div>
           </div>

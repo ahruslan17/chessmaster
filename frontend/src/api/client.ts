@@ -11,7 +11,7 @@ async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error((err as { detail?: string }).detail ?? "Request failed");
+    throw new Error((err as { detail?: string }).detail ?? "Ошибка запроса");
   }
   return res.json();
 }
@@ -64,7 +64,7 @@ export async function streamMoveCommentary(
   );
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error((err as { detail?: string }).detail ?? "Commentary stream failed");
+    throw new Error((err as { detail?: string }).detail ?? "Не удалось получить поток комментария");
   }
 
   if (!res.body) return "";
@@ -123,7 +123,7 @@ export async function uploadPgn(
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error((err as { detail?: string }).detail ?? "Upload failed");
+    throw new Error((err as { detail?: string }).detail ?? "Не удалось загрузить файл");
   }
   return res.json();
 }
@@ -176,7 +176,7 @@ export async function createReport(body: {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error((err as { detail?: string }).detail ?? "Create report failed");
+    throw new Error((err as { detail?: string }).detail ?? "Не удалось создать отчет");
   }
   return res.json();
 }

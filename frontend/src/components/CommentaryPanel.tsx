@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import * as api from "../api/client";
 import type { MoveAnalysisRead } from "../api/types";
+import { CLASSIFICATION_META } from "../classification";
 
 interface CommentaryPanelProps {
   gameId?: string;
@@ -53,10 +54,13 @@ export function CommentaryPanel({
   }, [allowStreaming, gameId, moveIndex, move?.id, move?.llm_comment]);
 
   const comment = move?.llm_comment ?? streamedComment ?? null;
+  const classificationMeta = move?.classification
+    ? CLASSIFICATION_META[move.classification as keyof typeof CLASSIFICATION_META]
+    : null;
 
   return (
     <div className="rounded-lg border border-stone-300 bg-stone-200/50 p-4 dark:border-stone-600 dark:bg-chess-light/30">
-      <h3 className="mb-3 text-sm font-semibold text-stone-600 dark:text-stone-400">Commentary</h3>
+      <h3 className="mb-3 text-sm font-semibold text-stone-600 dark:text-stone-400">Комментарии</h3>
       <div className="space-y-3 text-sm text-stone-700 dark:text-stone-300">
         {move ? (
           <>
@@ -68,27 +72,27 @@ export function CommentaryPanel({
                 move.move_san !== move.best_move_san &&
                 move.classification !== "theory" && (
                   <span className="text-stone-500">
-                    Best: {move.best_move_san}
+                    Лучший: {move.best_move_san}
                   </span>
                 )}
-              {move.classification && (
-                <span className="rounded border border-stone-400 px-2 py-0.5 capitalize text-stone-600 dark:border-stone-500/50 dark:text-stone-400">
-                  {move.classification}
+              {classificationMeta && (
+                <span className="rounded border border-stone-400 px-2 py-0.5 text-stone-600 dark:border-stone-500/50 dark:text-stone-400">
+                  {classificationMeta.label}
                 </span>
               )}
             </div>
             {comment ? (
               <p className="leading-relaxed">{comment}</p>
             ) : isStreaming ? (
-              <p className="italic text-stone-500">Generating commentary...</p>
+              <p className="italic text-stone-500">Генерируется комментарий...</p>
             ) : (
-              <p className="italic text-stone-500">No commentary for this move.</p>
+              <p className="italic text-stone-500">Для этого хода комментарий отсутствует.</p>
             )}
           </>
         ) : summary ? (
           <p className="leading-relaxed">{summary}</p>
         ) : (
-          <p className="italic text-stone-500">Select a move to view commentary.</p>
+          <p className="italic text-stone-500">Выберите ход, чтобы посмотреть комментарий.</p>
         )}
       </div>
     </div>

@@ -41,7 +41,7 @@ def _register_exception_handlers(app: FastAPI) -> None:
         logger.warning("LLM coach error: %s", exc)
         return JSONResponse(
             status_code=503,
-            content={"detail": "AI commentary service temporarily unavailable"},
+            content={"detail": "Сервис AI-комментариев временно недоступен"},
         )
 
 
