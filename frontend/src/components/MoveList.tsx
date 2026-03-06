@@ -38,11 +38,11 @@ export function MoveList({
       </div>
 
       <div className="max-h-72 overflow-y-auto px-2.5 py-2.5">
-        <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 lg:grid-cols-4">
+        <div className="columns-2 gap-1.5 sm:columns-3 lg:columns-4">
           {grouped.map(({ moveNumber, white, black }) => (
             <div
               key={moveNumber}
-              className="inline-flex items-center gap-1 rounded-md border border-stone-300/70 bg-stone-100/60 px-1.5 py-0.5 dark:border-stone-600/50 dark:bg-chess-dark/20"
+              className="mb-1.5 inline-flex w-full break-inside-avoid items-center gap-1 rounded-md border border-stone-300/70 bg-stone-100/60 px-1.5 py-0.5 dark:border-stone-600/50 dark:bg-chess-dark/20"
             >
               <span className="min-w-5 text-right text-xs font-medium text-stone-500 dark:text-stone-400">
                 {moveNumber}.
