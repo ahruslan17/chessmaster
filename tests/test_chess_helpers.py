@@ -21,7 +21,12 @@ class TestClassifyMove:
         assert classify_move(0, -15, chess.WHITE) == "best"
 
     def test_excellent_move(self) -> None:
-        assert classify_move(0, -5, chess.WHITE) == "excellent"
+        # Big swing from equal to winning for the mover -> rare "excellent".
+        assert classify_move(0, 350, chess.WHITE) == "excellent"
+
+    def test_not_excellent_when_already_winning(self) -> None:
+        # Improving an already winning position should stay "best", not "excellent".
+        assert classify_move(400, 500, chess.WHITE) == "best"
 
     def test_good_move(self) -> None:
         assert classify_move(0, -40, chess.WHITE) == "good"
