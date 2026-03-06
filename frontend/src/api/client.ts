@@ -180,3 +180,19 @@ export async function createReport(body: {
   }
   return res.json();
 }
+
+export async function listOpenings(params?: {
+  q?: string;
+  limit?: number;
+}): Promise<import("./types").OpeningRead[]> {
+  const query = params
+    ? new URLSearchParams(
+        Object.fromEntries(
+          Object.entries(params).filter(
+            ([, value]) => value != null && value !== ""
+          ) as [string, string][]
+        )
+      ).toString()
+    : "";
+  return fetchApi(`openings${query ? `?${query}` : ""}`);
+}

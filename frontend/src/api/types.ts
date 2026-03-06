@@ -67,3 +67,10 @@ export interface ReportRead {
   game_ids: string[] | null;
   created_at: string;
 }
+
+export interface OpeningRead {
+  eco_code: string;
+  name: string;
+  moves_san: string[];
+  move_count: number;
+}

@@ -3,6 +3,7 @@ import { useTheme } from "./contexts/ThemeContext";
 import { GameLibrary } from "./pages/GameLibrary";
 import { GameViewer } from "./pages/GameViewer";
 import { Reports } from "./pages/Reports";
+import { Openings } from "./pages/Openings";
 
 function ThemeToggle() {
   const { theme, toggleTheme } = useTheme();
@@ -49,6 +50,12 @@ export default function App() {
                 Партии
               </Link>
               <Link
+                to="/openings"
+                className="text-stone-600 transition hover:text-stone-900 dark:text-stone-200 dark:hover:text-stone-100"
+              >
+                Дебюты
+              </Link>
+              <Link
                 to="/reports"
                 className="text-stone-600 transition hover:text-stone-900 dark:text-stone-200 dark:hover:text-stone-100"
               >
@@ -62,6 +69,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<GameLibrary />} />
             <Route path="/games/:gameId" element={<GameViewer />} />
+            <Route path="/openings" element={<Openings />} />
             <Route path="/reports" element={<Reports />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

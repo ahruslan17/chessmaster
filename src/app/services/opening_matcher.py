@@ -136,3 +136,7 @@ class OpeningMatcher:
         entries = self._ensure_loaded()
         game_sans = _game_moves_to_sans(moves)
         return _find_longest_prefix_match(game_sans, entries)
+
+    def list_openings(self) -> list[tuple[list[str], str, str]]:
+        """Return all loaded opening entries as (moves_san, eco_code, name)."""
+        return self._ensure_loaded()
