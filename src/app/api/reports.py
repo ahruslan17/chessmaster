@@ -22,14 +22,12 @@ async def create_report(
     session: AsyncSessionDep,
     report_service: ReportServiceDep,
 ) -> ReportRead:
-    """Generate a coaching report for a time period.
-
-    Finds all games with completed analyses in the date range, aggregates
-    statistics, and uses the LLM to produce recommendations, weakness
-    patterns, and strength patterns.
-    """
+    """Generate a coaching report for a period."""
     if body.period_end < body.period_start:
-        raise HTTPException(status_code=422, detail="Дата конца периода должна быть не раньше даты начала")
+        raise HTTPException(
+            status_code=422,
+            detail="Дата конца периода должна быть не раньше даты начала",
+        )
 
     report = await report_service.generate_report(
         period_start=body.period_start,
@@ -51,18 +49,16 @@ async def create_report(
 @router.get("", response_model=list[ReportRead])
 async def list_reports(
     session: AsyncSessionDep,
-    period_type: str | None = None,
+    period_type: str | None = Query(None, pattern="^(daily|weekly|monthly)$"),
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
 ) -> list[ReportRead]:
-    """List all reports, optionally filtered by period type."""
+    """List reports, optionally filtered by period type."""
     stmt = select(PeriodReport)
-
     if period_type is not None:
         stmt = stmt.where(PeriodReport.period_type == period_type)
 
     stmt = stmt.order_by(PeriodReport.created_at.desc()).offset(offset).limit(limit)
-
     rows = await session.execute(stmt)
     return list(rows.scalars().all())
 
@@ -75,5 +71,5 @@ async def get_report(
     """Get a previously generated report."""
     report = await session.get(PeriodReport, report_id)
     if report is None:
-        raise ReportNotFoundError("Отчет не найден")
+        raise ReportNotFoundError("Отчёт не найден")
     return report

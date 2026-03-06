@@ -22,7 +22,7 @@ export function useCreateReport() {
     mutationFn: (body: {
       period_start: string;
       period_end: string;
-      period_type: string;
+      period_type: "daily" | "weekly" | "monthly";
     }) => api.createReport(body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["reports"] });

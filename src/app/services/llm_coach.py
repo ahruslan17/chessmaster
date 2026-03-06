@@ -66,17 +66,23 @@ class GameSummaryResult:
     middlegame_assessment: str
     endgame_assessment: str
     key_moments: list[dict[str, str]] = field(default_factory=list)
+    coach_feedback: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
 class PeriodReportInput:
     """Context for generating a period coaching report."""
 
+    period_type: str
     period_start: str
     period_end: str
     games_count: int
     game_summaries: list[str] = field(default_factory=list)
     aggregate_stats: dict[str, object] = field(default_factory=dict)
+    previous_period_start: str | None = None
+    previous_period_end: str | None = None
+    previous_games_count: int = 0
+    comparison_metrics: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -86,6 +92,8 @@ class PeriodReportResult:
     recommendations: str
     weakness_patterns: list[dict[str, str]] = field(default_factory=list)
     strength_patterns: list[dict[str, str]] = field(default_factory=list)
+    coach_feedback: dict[str, object] = field(default_factory=dict)
+    comparison_summary: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -204,7 +212,8 @@ class LLMCoachService:
             opening_assessment=parsed.get("opening_assessment", ""),
             middlegame_assessment=parsed.get("middlegame_assessment", ""),
             endgame_assessment=parsed.get("endgame_assessment", ""),
-            key_moments=parsed.get("key_moments", []),
+            key_moments=_as_list_of_dicts(parsed.get("key_moments")),
+            coach_feedback=_as_dict(parsed.get("coach_feedback")),
         )
         logger.info("Generated game summary (%d chars)", len(result.summary))
         return result
@@ -220,8 +229,10 @@ class LLMCoachService:
 
         result = PeriodReportResult(
             recommendations=parsed.get("recommendations", ""),
-            weakness_patterns=parsed.get("weakness_patterns", []),
-            strength_patterns=parsed.get("strength_patterns", []),
+            weakness_patterns=_as_list_of_dicts(parsed.get("weakness_patterns")),
+            strength_patterns=_as_list_of_dicts(parsed.get("strength_patterns")),
+            coach_feedback=_as_dict(parsed.get("coach_feedback")),
+            comparison_summary=parsed.get("comparison_summary", ""),
         )
         logger.info(
             "Generated period report: %d weakness(es), %d strength(s)",
@@ -295,3 +306,19 @@ def _parse_json_response(text: str) -> dict[str, object]:
         return {}
 
     return parsed
+
+
+def _as_dict(value: object) -> dict[str, object]:
+    if isinstance(value, dict):
+        return value
+    return {}
+
+
+def _as_list_of_dicts(value: object) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    result: list[dict[str, str]] = []
+    for item in value:
+        if isinstance(item, dict):
+            result.append({str(k): str(v) for k, v in item.items()})
+    return result

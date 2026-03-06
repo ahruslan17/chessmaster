@@ -4,7 +4,7 @@ import uuid
 from datetime import date, datetime
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ReportCreate(BaseModel):
@@ -12,7 +12,7 @@ class ReportCreate(BaseModel):
 
     period_start: date
     period_end: date
-    period_type: str  # e.g. "weekly", "monthly"
+    period_type: str = Field(pattern="^(daily|weekly|monthly)$")
 
 
 class ReportRead(BaseModel):
@@ -25,6 +25,9 @@ class ReportRead(BaseModel):
     recommendations: str | None = None
     weakness_patterns: Any | None = None
     strength_patterns: Any | None = None
+    coach_feedback: Any | None = None
+    comparison_metrics: Any | None = None
+    comparison_summary: str | None = None
     game_ids: Any | None = None
     created_at: datetime
 

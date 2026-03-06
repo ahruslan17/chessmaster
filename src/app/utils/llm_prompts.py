@@ -16,34 +16,29 @@ if TYPE_CHECKING:
 SINGLE_MOVE_COMMENTARY_SYSTEM = (
     "Ты опытный шахматный тренер, который делает походовый разбор партии. "
     "Аудитория: клубный игрок уровня Elo 1200-1800.\n\n"
-    "Отвечай ТОЛЬКО на русском языке. "
-    "Верни ТОЛЬКО текст комментария (2-5 предложений), без JSON и без markdown.\n"
-    "Для ходов с классификацией 'theory': объясни идею хода, "
-    "не предлагай альтернативы. "
+    "Отвечай только на русском языке. "
+    "Верни только текст комментария (2-5 предложений), без JSON и без markdown.\n"
+    "Для ходов с классификацией 'theory': объясни идею хода, не предлагай альтернативы. "
     "Для excellent/best/good: краткая позитивная оценка. "
     "Для inaccuracy/mistake/blunder: объясни ошибку и лучшую альтернативу. "
-    "Используй и линии движка, и фактическое продолжение партии, "
-    "чтобы показать долгосрочные последствия.\n"
+    "Используй и линии движка, и фактическое продолжение партии, чтобы показать долгосрочные последствия."
 )
 
 MOVE_COMMENTARY_SYSTEM = (
     "Ты опытный шахматный тренер, который делает походовый разбор партии. "
     "Аудитория: клубный игрок уровня Elo 1200-1800.\n\n"
-    "Отвечай ТОЛЬКО на русском языке.\n\n"
+    "Отвечай только на русском языке.\n\n"
     "Правила:\n"
-    '- Для "theory" ходов: объясни, почему ход играется и какие идеи поддерживает. '
-    "Не предлагай альтернативы.\n"
+    '- Для "theory" ходов: объясни, почему ход играется и какие идеи поддерживает. Не предлагай альтернативы.\n'
     '- Для "excellent" ходов: 1 короткое предложение о почти идеальном ходе.\n'
     '- Для "best" ходов: 1 короткое предложение с позитивной оценкой.\n'
     '- Для "good" ходов: 1-2 предложения о практической уместности.\n'
     '- Для "inaccuracy" ходов: 2-3 предложения о неточности и лучшей альтернативе.\n'
     '- Для "mistake" ходов: 3-4 предложения с разбором ошибки и последствий.\n'
     '- Для "blunder" ходов: 4-5 предложений с подробным разбором критической ошибки.\n\n'
-    "Используй стандартную алгебраическую нотацию. Сравнивай PV движка "
-    "и реальное продолжение партии, чтобы объяснить и ближайшие, и долгосрочные "
-    "последствия хода.\n\n"
-    "Ты ОБЯЗАН вернуть ТОЛЬКО JSON-объект в точном формате "
-    "(без markdown и лишнего текста):\n"
+    "Используй стандартную алгебраическую нотацию. "
+    "Сравнивай PV движка и реальное продолжение партии.\n\n"
+    "Ты обязан вернуть только JSON-объект в точном формате (без markdown и лишнего текста):\n"
     "{\n"
     '  "comments": [\n'
     '    {"move_index": 0, "comment": "Комментарий тренера."},\n'
@@ -54,40 +49,45 @@ MOVE_COMMENTARY_SYSTEM = (
 
 GAME_SUMMARY_SYSTEM = (
     "Ты опытный шахматный тренер, который пишет послематчевый разбор. "
-    "Оцени общее качество игры, разбор по стадиям партии и ключевые переломные "
-    "моменты.\n\n"
-    "Отвечай ТОЛЬКО на русском языке.\n\n"
-    "Ты ОБЯЗАН вернуть ТОЛЬКО JSON-объект в точном формате "
-    "(без markdown и лишнего текста):\n"
+    "Нужно дать честную, конкретную и практичную обратную связь.\n\n"
+    "Отвечай только на русском языке.\n\n"
+    "Ты обязан вернуть только JSON-объект в точном формате (без markdown и лишнего текста):\n"
     "{\n"
     '  "summary": "Общий итог партии (2-4 предложения).",\n'
     '  "opening_assessment": "Оценка дебюта (1-3 предложения).",\n'
     '  "middlegame_assessment": "Оценка миттельшпиля (1-3 предложения).",\n'
-    '  "endgame_assessment": "Оценка эндшпиля (1-3 предложения) '
-    'или отметка, что до него партия не дошла.",\n'
+    '  "endgame_assessment": "Оценка эндшпиля (1-3 предложения) или отметка, что до него партия не дошла.",\n'
     '  "key_moments": [\n'
-    '    {"move": "15...Bxd5??", "description": "Почему это был переломный момент."}\n'
-    "  ]\n"
+    '    {"move": "15...Bxd5??", "description": "Почему это переломный момент."}\n'
+    "  ],\n"
+    '  "coach_feedback": {\n'
+    '    "pluses": ["Что получилось хорошо"],\n'
+    '    "minuses": ["Ключевые проблемы"],\n'
+    '    "focus_points": ["На чем сфокусироваться в ближайших партиях"],\n'
+    '    "training_tasks": ["Конкретные задания: теория, задачи, тип позиций"]\n'
+    "  }\n"
     "}"
 )
 
 PERIOD_REPORT_SYSTEM = (
-    "Ты шахматный тренер, который пишет отчет о прогрессе по нескольким партиям "
-    "за выбранный период. Определи повторяющиеся паттерны (сильные и слабые стороны) "
-    "и дай конкретные рекомендации.\n\n"
-    "Отвечай ТОЛЬКО на русском языке.\n\n"
-    "Ты ОБЯЗАН вернуть ТОЛЬКО JSON-объект в точном формате "
-    "(без markdown и лишнего текста):\n"
+    "Ты шахматный тренер, который пишет отчёт о прогрессе игрока за период. "
+    "Нужно дать практичный план улучшения, а не общие фразы.\n\n"
+    "Отвечай только на русском языке.\n\n"
+    "Ты обязан вернуть только JSON-объект в точном формате (без markdown и лишнего текста):\n"
     "{\n"
     '  "recommendations": "Подробные рекомендации (1-3 абзаца).",\n'
+    '  "comparison_summary": "Сравнение с предыдущим периодом: что стало лучше/хуже и почему.",\n'
     '  "weakness_patterns": [\n'
-    '    {"pattern": "Короткое название", "description": "Подробное описание", '
-    '"frequency": "например, 4 из 10 партий"}\n'
+    '    {"pattern": "Короткое название", "description": "Подробное описание", "frequency": "например, 4 из 10 партий"}\n'
     "  ],\n"
     '  "strength_patterns": [\n'
-    '    {"pattern": "Короткое название", "description": "Подробное описание", '
-    '"frequency": "например, 7 из 10 партий"}\n'
-    "  ]\n"
+    '    {"pattern": "Короткое название", "description": "Подробное описание", "frequency": "например, 7 из 10 партий"}\n'
+    "  ],\n"
+    '  "coach_feedback": {\n'
+    '    "pluses": ["Главные улучшения"],\n'
+    '    "minuses": ["Главные просадки"],\n'
+    '    "action_items": ["Конкретные действия на следующий период"]\n'
+    "  }\n"
     "}"
 )
 
@@ -110,18 +110,14 @@ def build_single_move_commentary_messages(
 def build_move_commentary_messages(
     moves: list[MoveCommentaryInput],
 ) -> list[dict[str, str]]:
-    """Build chat messages for per-move commentary generation.
-
-    Returns a list of ``{"role": ..., "content": ...}`` dicts ready for
-    ``litellm.acompletion``.
-    """
+    """Build chat messages for per-move commentary generation."""
     user_parts: list[str] = [
         "Проанализируй следующие ходы и дай комментарий по каждому.",
         "",
     ]
     for move in moves:
         user_parts.append(_format_move_context(move))
-        user_parts.append("")  # blank line between moves
+        user_parts.append("")
 
     return [
         {"role": "system", "content": MOVE_COMMENTARY_SYSTEM},
@@ -134,24 +130,24 @@ def build_game_summary_messages(
 ) -> list[dict[str, str]]:
     """Build chat messages for game summary generation."""
     lines: list[str] = [
-        f"Game: {context.white_player} vs {context.black_player}",
-        f"Result: {context.result}",
+        f"Партия: {context.white_player} vs {context.black_player}",
+        f"Результат: {context.result}",
     ]
     if context.opening_name:
         eco = context.eco_code or "?"
-        lines.append(f"Opening: {context.opening_name} ({eco})")
-    lines.append(f"Total half-moves: {context.total_moves}")
+        lines.append(f"Дебют: {context.opening_name} ({eco})")
+    lines.append(f"Всего полуходов: {context.total_moves}")
     lines.append(
-        f"Accuracy - White: {context.accuracy_white:.1f}%, Black: {context.accuracy_black:.1f}%"
+        f"Точность - Белые: {context.accuracy_white:.1f}%, Черные: {context.accuracy_black:.1f}%"
     )
     lines.append("")
-    lines.append("Move classification distribution:")
+    lines.append("Распределение классификаций ходов:")
     for classification, count in sorted(context.classification_counts.items()):
         lines.append(f"  {classification}: {count}")
 
     if context.key_moments:
         lines.append("")
-        lines.append("Notable moments (inaccuracies, mistakes, blunders):")
+        lines.append("Ключевые моменты (неточности, ошибки, зевки):")
         for moment in context.key_moments:
             lines.append(_format_move_context(moment))
             lines.append("")
@@ -167,17 +163,34 @@ def build_period_report_messages(
 ) -> list[dict[str, str]]:
     """Build chat messages for period report generation."""
     lines: list[str] = [
-        f"Period: {context.period_start} to {context.period_end}",
-        f"Games analyzed: {context.games_count}",
+        f"Тип периода: {context.period_type}",
+        f"Текущий период: {context.period_start} - {context.period_end}",
+        f"Проанализировано партий: {context.games_count}",
         "",
     ]
+
+    if context.previous_period_start and context.previous_period_end:
+        lines.extend(
+            [
+                f"Предыдущий период: {context.previous_period_start} - {context.previous_period_end}",
+                f"Партий в предыдущем периоде: {context.previous_games_count}",
+                "",
+            ]
+        )
+
     if context.aggregate_stats:
-        lines.append("Aggregate statistics:")
+        lines.append("Агрегированная статистика текущего периода:")
         for key, value in context.aggregate_stats.items():
             lines.append(f"  {key}: {value}")
         lines.append("")
 
-    lines.append("Individual game summaries:")
+    if context.comparison_metrics:
+        lines.append("Метрики сравнения с предыдущим периодом:")
+        for key, value in context.comparison_metrics.items():
+            lines.append(f"  {key}: {value}")
+        lines.append("")
+
+    lines.append("Индивидуальные краткие разборы партий:")
     for idx, summary in enumerate(context.game_summaries, 1):
         lines.append(f"\n--- Game {idx} ---")
         lines.append(summary)

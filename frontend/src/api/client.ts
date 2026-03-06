@@ -9,11 +9,23 @@ async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
       ...options?.headers,
     },
   });
+
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error((err as { detail?: string }).detail ?? "Ошибка запроса");
   }
   return res.json();
+}
+
+function toQuery(params: Record<string, string | number | undefined>): string {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value != null && value !== "") {
+      query.set(key, String(value));
+    }
+  }
+  const encoded = query.toString();
+  return encoded ? `?${encoded}` : "";
 }
 
 export async function listGames(params: {
@@ -25,16 +37,32 @@ export async function listGames(params: {
   offset?: number;
   limit?: number;
 } = {}): Promise<import("./types").GameListItem[]> {
-  const q = new URLSearchParams();
-  Object.entries(params).forEach(([k, v]) => {
-    if (v != null && v !== "") q.set(k, String(v));
-  });
-  const query = q.toString();
-  return fetchApi(`games${query ? `?${query}` : ""}`);
+  return fetchApi(`games${toQuery(params)}`);
 }
 
 export async function getGame(gameId: string): Promise<import("./types").GameRead> {
   return fetchApi(`games/${gameId}`);
+}
+
+export async function getGameNote(gameId: string): Promise<import("./types").GameNoteRead> {
+  return fetchApi(`games/${gameId}/note`);
+}
+
+export async function upsertGameNote(
+  gameId: string,
+  body: { content: string }
+): Promise<import("./types").GameNoteRead> {
+  return fetchApi(`games/${gameId}/note`, {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function listGameNotes(params?: {
+  offset?: number;
+  limit?: number;
+}): Promise<import("./types").GameNoteListItem[]> {
+  return fetchApi(`games/notes${toQuery(params ?? {})}`);
 }
 
 export async function getAnalysis(
@@ -62,12 +90,17 @@ export async function streamMoveCommentary(
       signal,
     }
   );
+
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error((err as { detail?: string }).detail ?? "Не удалось получить поток комментария");
+    throw new Error(
+      (err as { detail?: string }).detail ?? "Не удалось получить поток комментария"
+    );
   }
 
-  if (!res.body) return "";
+  if (!res.body) {
+    return "";
+  }
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -76,7 +109,9 @@ export async function streamMoveCommentary(
   let eventData: string[] = [];
 
   const flushEvent = () => {
-    if (eventData.length === 0) return;
+    if (eventData.length === 0) {
+      return;
+    }
     const chunk = eventData.join("\n");
     fullText += chunk;
     onChunk?.(chunk);
@@ -85,7 +120,9 @@ export async function streamMoveCommentary(
 
   while (true) {
     const { done, value } = await reader.read();
-    if (done) break;
+    if (done) {
+      break;
+    }
 
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split("\n");
@@ -97,7 +134,9 @@ export async function streamMoveCommentary(
         eventData.push(line.startsWith("data: ") ? line.slice(6) : "");
         continue;
       }
-      if (line === "") flushEvent();
+      if (line === "") {
+        flushEvent();
+      }
     }
   }
 
@@ -115,7 +154,9 @@ export async function uploadPgn(
 ): Promise<import("./types").GameRead[]> {
   const form = new FormData();
   form.append("file", file);
-  if (playerColor) form.append("player_color", playerColor);
+  if (playerColor) {
+    form.append("player_color", playerColor);
+  }
 
   const res = await fetch(`${API_BASE}/games/upload`, {
     method: "POST",
@@ -142,20 +183,11 @@ export async function importPgnText(
 }
 
 export async function listReports(params?: {
-  period_type?: string;
+  period_type?: "daily" | "weekly" | "monthly";
   offset?: number;
   limit?: number;
 }): Promise<import("./types").ReportRead[]> {
-  const query = params
-    ? new URLSearchParams(
-        Object.fromEntries(
-          Object.entries(params).filter(
-            ([, v]) => v != null && v !== ""
-          ) as [string, string][]
-        )
-      ).toString()
-    : "";
-  return fetchApi(`reports${query ? `?${query}` : ""}`);
+  return fetchApi(`reports${toQuery(params ?? {})}`);
 }
 
 export async function getReport(
@@ -167,32 +199,17 @@ export async function getReport(
 export async function createReport(body: {
   period_start: string;
   period_end: string;
-  period_type: string;
+  period_type: "daily" | "weekly" | "monthly";
 }): Promise<import("./types").ReportRead> {
-  const res = await fetch(`/api/reports`, {
+  return fetchApi("reports", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error((err as { detail?: string }).detail ?? "Не удалось создать отчет");
-  }
-  return res.json();
 }
 
 export async function listOpenings(params?: {
   q?: string;
   limit?: number;
 }): Promise<import("./types").OpeningRead[]> {
-  const query = params
-    ? new URLSearchParams(
-        Object.fromEntries(
-          Object.entries(params).filter(
-            ([, value]) => value != null && value !== ""
-          ) as [string, string][]
-        )
-      ).toString()
-    : "";
-  return fetchApi(`openings${query ? `?${query}` : ""}`);
+  return fetchApi(`openings${toQuery(params ?? {})}`);
 }

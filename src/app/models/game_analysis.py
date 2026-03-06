@@ -30,6 +30,7 @@ class GameAnalysis(Base):
     middlegame_assessment: Mapped[str | None] = mapped_column(Text, nullable=True)
     endgame_assessment: Mapped[str | None] = mapped_column(Text, nullable=True)
     key_moments: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    coach_feedback: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     accuracy_white: Mapped[float | None] = mapped_column(Float, nullable=True)
     accuracy_black: Mapped[float | None] = mapped_column(Float, nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")

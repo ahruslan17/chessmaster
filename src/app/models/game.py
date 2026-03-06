@@ -10,6 +10,7 @@ from app.models.base import Base
 
 if TYPE_CHECKING:
     from app.models.game_analysis import GameAnalysis
+    from app.models.game_note import GameNote
 
 
 class Game(Base):
@@ -33,4 +34,7 @@ class Game(Base):
     # Relationships
     analysis: Mapped[GameAnalysis | None] = relationship(
         "GameAnalysis", back_populates="game", uselist=False, cascade="all, delete-orphan"
+    )
+    note: Mapped[GameNote | None] = relationship(
+        "GameNote", back_populates="game", uselist=False, cascade="all, delete-orphan"
     )

@@ -38,6 +38,7 @@ export interface GameAnalysisRead {
   middlegame_assessment: string | null;
   endgame_assessment: string | null;
   key_moments: unknown;
+  coach_feedback: unknown;
   accuracy_white: number | null;
   accuracy_black: number | null;
   status: string;
@@ -64,8 +65,29 @@ export interface ReportRead {
   recommendations: string | null;
   weakness_patterns: ReportPattern[] | null;
   strength_patterns: ReportPattern[] | null;
+  coach_feedback: unknown;
+  comparison_metrics: Record<string, unknown> | null;
+  comparison_summary: string | null;
   game_ids: string[] | null;
   created_at: string;
+}
+
+export interface GameNoteRead {
+  id: string;
+  game_id: string;
+  content: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GameNoteListItem {
+  game_id: string;
+  white_player: string;
+  black_player: string;
+  played_at: string | null;
+  opening_name: string | null;
+  content: string | null;
+  updated_at: string;
 }
 
 export interface OpeningRead {

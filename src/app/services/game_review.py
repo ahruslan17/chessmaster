@@ -13,6 +13,7 @@ from app.models.move_analysis import MoveAnalysis
 from app.services.opening_matcher import OpeningMatch, OpeningMatcher
 from app.services.llm_coach import (
     GameSummaryInput,
+    GameSummaryResult,
     LLMCoachError,
     LLMCoachService,
     MoveCommentaryInput,
@@ -135,6 +136,7 @@ class GameReviewService:
             existing.middlegame_assessment = None
             existing.endgame_assessment = None
             existing.key_moments = None
+            existing.coach_feedback = None
             existing.accuracy_white = None
             existing.accuracy_black = None
             existing.status = "in_progress"
@@ -273,7 +275,7 @@ class GameReviewService:
         game_analysis_id: uuid.UUID,
         commentaries: dict[int, str],
         move_inputs: list[MoveCommentaryInput],
-        summary: object | None,
+        summary: GameSummaryResult | None,
     ) -> None:
         """Write LLM commentary and summary to DB records."""
         # Build a lookup keyed by (move_number, color) for robust matching
@@ -303,6 +305,7 @@ class GameReviewService:
                 analysis.middlegame_assessment = summary.middlegame_assessment
                 analysis.endgame_assessment = summary.endgame_assessment
                 analysis.key_moments = summary.key_moments
+                analysis.coach_feedback = summary.coach_feedback
 
         await self._session.flush()
         logger.info(

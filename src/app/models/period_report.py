@@ -20,4 +20,7 @@ class PeriodReport(Base):
     recommendations: Mapped[str | None] = mapped_column(Text, nullable=True)
     weakness_patterns: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     strength_patterns: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    coach_feedback: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    comparison_metrics: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    comparison_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     game_ids: Mapped[dict | None] = mapped_column(JSONB, nullable=True)

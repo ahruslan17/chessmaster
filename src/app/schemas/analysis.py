@@ -36,6 +36,7 @@ class GameAnalysisRead(BaseModel):
     middlegame_assessment: str | None = None
     endgame_assessment: str | None = None
     key_moments: Any | None = None
+    coach_feedback: Any | None = None
     accuracy_white: float | None = None
     accuracy_black: float | None = None
     status: str

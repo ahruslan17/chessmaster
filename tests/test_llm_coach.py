@@ -82,6 +82,7 @@ def _make_game_summary_input() -> GameSummaryInput:
 def _make_period_report_input() -> PeriodReportInput:
     """Create a PeriodReportInput with sensible defaults for testing."""
     return PeriodReportInput(
+        period_type="monthly",
         period_start="2024-01-01",
         period_end="2024-01-31",
         games_count=5,
