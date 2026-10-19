@@ -54,7 +54,7 @@ docker compose $ENV $FILE build api
 docker compose $ENV $FILE build frontend
 docker compose $ENV $FILE up -d postgres redis
 docker compose $ENV $FILE up -d api
-docker compose $ENV $FILE exec -T api uv run alembic upgrade head
+docker compose $ENV $FILE exec -T api /app/.venv/bin/alembic upgrade head
 docker compose $ENV $FILE up -d celery frontend
 docker compose $ENV $FILE ps
 ```
@@ -74,7 +74,7 @@ curl --fail --max-time 20 https://chess.rakhmetzianov.website/api/health
 ```bash
 cd /srv/chessmaster/repo
 docker compose --env-file /srv/chessmaster/.env -f compose.production.yaml \
-  exec -T api uv run python -m app.scripts.create_access_code
+  exec -T api /app/.venv/bin/python -m app.scripts.create_access_code
 ```
 
 Передать посетителю только выведенный код. Не передавать cookie, `.env` или пароль БД.

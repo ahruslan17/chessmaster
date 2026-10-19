@@ -39,6 +39,12 @@ services:
     restart: unless-stopped
     mem_limit: 256m
     cpus: 0.4
+    command:
+      [
+        "sh",
+        "-c",
+        "/app/.venv/bin/alembic upgrade head && exec /app/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000",
+      ]
     ports:
       - "127.0.0.1:18080:8000"
     healthcheck:
@@ -78,7 +84,15 @@ services:
     restart: unless-stopped
     mem_limit: 512m
     cpus: 1
-    command: ["uv", "run", "celery", "-A", "app.core.celery_app", "worker", "--loglevel=info", "--concurrency=1"]
+    command:
+      [
+        "/app/.venv/bin/celery",
+        "-A",
+        "app.core.celery_app",
+        "worker",
+        "--loglevel=info",
+        "--concurrency=1",
+      ]
     pids_limit: 64
     environment: *app_environment
     depends_on:
