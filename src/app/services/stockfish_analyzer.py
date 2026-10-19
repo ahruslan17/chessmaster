@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import math
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import chess
@@ -23,12 +25,92 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
+class EngineScore:
+    """Lossless engine score, always from White's perspective.
+
+    Positive mate means White wins; negative mate means Black wins. Terminal
+    mate has distance zero and therefore requires an explicit winner.
+    """
+
+    cp: float | None = None
+    mate: int | None = None
+    mate_winner: str | None = None
+    perspective: str = "white"
+
+    def __post_init__(self) -> None:
+        if self.perspective != "white" or (self.cp is None) == (self.mate is None):
+            raise ValueError("EngineScore requires exactly one of cp/mate and White POV")
+        if self.cp is not None:
+            if not math.isfinite(self.cp) or self.mate_winner is not None:
+                raise ValueError("Centipawn score must be finite and cannot have a mate winner")
+        else:
+            if not isinstance(self.mate, int) or isinstance(self.mate, bool):
+                raise ValueError("Mate distance must be an integer")
+            winner = "white" if self.mate > 0 else "black" if self.mate < 0 else None
+            if winner is not None and self.mate_winner is None:
+                object.__setattr__(self, "mate_winner", winner)
+            if self.mate_winner not in ("white", "black") or (
+                winner is not None and self.mate_winner != winner
+            ):
+                raise ValueError("Mate score requires a winner consistent with its sign")
+
+    @classmethod
+    def from_engine(cls, pov_score: chess.engine.PovScore) -> EngineScore:
+        """Convert PovScore without replacing mate with synthetic centipawns."""
+        score = pov_score.white()
+        mate = score.mate()
+        if mate is not None:
+            winner = "white" if score > chess.engine.Cp(0) else "black"
+            return cls(mate=mate, mate_winner=winner)
+        cp = score.score()
+        if cp is None:
+            raise ValueError("Engine returned neither a centipawn nor a mate score")
+        return cls(cp=float(cp))
+
+    def to_json(self) -> dict[str, object]:
+        return {
+            "cp": float(self.cp) if self.cp is not None else None,
+            "mate": self.mate,
+            "mate_winner": self.mate_winner,
+            "perspective": self.perspective,
+        }
+
+
+def classify_evaluation(
+    eval_before_white_cp: float,
+    eval_after_white_cp: float,
+    color: chess.Color,
+    score_before: EngineScore | None = None,
+    score_after: EngineScore | None = None,
+) -> str:
+    """Classify typed mate transitions before the legacy cp-only heuristic.
+
+    Allowing a newly forced opponent mate is a blunder; losing one's forced
+    mate without allowing an opponent mate is a mistake. These are categorical
+    rules, not conversions of mate distance to centipawns. Preserved or improved
+    mate outcomes are not errors, regardless of search-distance fluctuations.
+    """
+    if score_before is not None and score_after is not None and (
+        score_before.mate is not None or score_after.mate is not None
+    ):
+        mover = "white" if color else "black"
+        opponent = "black" if color else "white"
+        if score_after.mate_winner == opponent and score_before.mate_winner != opponent:
+            return "blunder"
+        if score_before.mate_winner == mover and score_after.mate_winner != mover:
+            return "mistake"
+        return "best"
+    return classify_move(eval_before_white_cp, eval_after_white_cp, color)
+
+
+@dataclass(frozen=True)
 class CandidateMove:
     """A single candidate move returned by Stockfish multipv analysis."""
 
     move_san: str
     eval_cp: float  # centipawns from white's perspective
     pv_san: list[str] = field(default_factory=list)
+    score: EngineScore | None = None
 
 
 @dataclass(frozen=True)
@@ -44,11 +126,19 @@ class MoveEvaluation:
     centipawn_loss: float  # always >= 0
     classification: str
     top_moves: list[CandidateMove] = field(default_factory=list)
+    score_before: EngineScore | None = None
+    score_after: EngineScore | None = None
+    played_line: list[str] = field(default_factory=list)
 
     def top_moves_as_json(self) -> list[dict[str, object]]:
         """Serialize top_moves for JSONB storage."""
         return [
-            {"move_san": cm.move_san, "eval_cp": cm.eval_cp, "pv_san": cm.pv_san}
+            {
+                "move_san": cm.move_san,
+                "eval_cp": cm.eval_cp,
+                "pv_san": cm.pv_san,
+                "score": cm.score.to_json() if cm.score is not None else None,
+            }
             for cm in self.top_moves
         ]
 
@@ -68,6 +158,8 @@ class _PositionInfo:
 
     eval_white_cp: float  # centipawns from white's perspective
     candidates: list[_CandidateRaw] = field(default_factory=list)
+    score: EngineScore | None = None
+    primary_candidate: _CandidateRaw | None = None
 
 
 @dataclass(frozen=True)
@@ -88,8 +180,12 @@ def _analyze_position(
     """Run Stockfish multipv analysis on a single position."""
     effective_multipv = min(multipv, board.legal_moves.count())
     if effective_multipv == 0:
-        # No legal moves: map terminal position to a stable score.
-        return _PositionInfo(eval_white_cp=_terminal_eval_white_cp(board), candidates=[])
+        score = (
+            EngineScore(mate=0, mate_winner="black" if board.turn else "white")
+            if board.is_checkmate()
+            else EngineScore(cp=0.0)
+        )
+        return _PositionInfo(eval_white_cp=_terminal_eval_white_cp(board), score=score)
 
     infos = engine.analyse(
         board,
@@ -101,20 +197,31 @@ def _analyze_position(
     if not isinstance(infos, list):
         infos = [infos]
 
-    candidates: list[_CandidateRaw] = []
     infos_sorted = sorted(infos, key=lambda i: int(i.get("multipv", 1)))
+    primary = next((info for info in infos_sorted if int(info.get("multipv", 1)) == 1), None)
+    if primary is None or primary.get("score") is None:
+        raise chess.engine.EngineError("Primary (multipv=1) engine score is missing")
+    best_score = primary["score"]
+    candidates: list[_CandidateRaw] = []
+    primary_candidate: _CandidateRaw | None = None
     for info in infos_sorted:
         pov_score = info.get("score")
         if pov_score is None:
             continue
         pv_moves: list[chess.Move] = info.get("pv", [])
-        first_move = pv_moves[0] if pv_moves else info.get("move")
-        if first_move is None:
+        if not pv_moves or not board.is_legal(pv_moves[0]):
             continue
-        candidates.append(_CandidateRaw(move=first_move, score=pov_score, pv=pv_moves))
+        candidate = _CandidateRaw(move=pv_moves[0], score=pov_score, pv=pv_moves)
+        candidates.append(candidate)
+        if info is primary:
+            primary_candidate = candidate
 
-    best_eval = score_to_centipawns(candidates[0].score, chess.WHITE) if candidates else 0.0
-    return _PositionInfo(eval_white_cp=best_eval, candidates=candidates)
+    return _PositionInfo(
+        eval_white_cp=score_to_centipawns(best_score, chess.WHITE),
+        candidates=candidates,
+        score=EngineScore.from_engine(best_score),
+        primary_candidate=primary_candidate,
+    )
 
 
 def _terminal_eval_white_cp(board: chess.Board) -> float:
@@ -132,11 +239,20 @@ def _build_candidates_san(
     """Convert raw candidate data to SAN-based CandidateMove objects."""
     result: list[CandidateMove] = []
     for raw in candidates:
+        if not board.is_legal(raw.move):
+            continue
         try:
             move_san = board.san(raw.move)
             eval_cp = score_to_centipawns(raw.score, chess.WHITE)
             pv_san = pv_to_san(board, raw.pv)
-            result.append(CandidateMove(move_san=move_san, eval_cp=eval_cp, pv_san=pv_san))
+            result.append(
+                CandidateMove(
+                    move_san=move_san,
+                    eval_cp=eval_cp,
+                    pv_san=pv_san,
+                    score=EngineScore.from_engine(raw.score),
+                )
+            )
         except (ValueError, AssertionError):
             logger.debug("Skipping invalid candidate move during SAN conversion")
     return result
@@ -190,7 +306,11 @@ class StockfishAnalyzerService:
         self._time_limit = time_limit
         self._threads = threads
 
-    def analyze_game(self, moves: list[chess.Move]) -> list[MoveEvaluation]:
+    def analyze_game(
+        self,
+        moves: list[chess.Move],
+        progress_callback: Callable[[int, int], None] | None = None,
+    ) -> list[MoveEvaluation]:
         """Analyze every move in a game and return per-move evaluations.
 
         Opens a fresh Stockfish process, replays the game, evaluates each
@@ -205,12 +325,12 @@ class StockfishAnalyzerService:
         )
 
         with chess.engine.SimpleEngine.popen_uci(self._path) as engine:
-            if self._threads > 1:
+            if self._threads >= 1:
                 try:
                     engine.configure({"Threads": self._threads})
-                except Exception as exc:
+                except (chess.engine.EngineError, ValueError) as exc:
                     logger.warning("Could not set Stockfish Threads option: %s", exc)
-            return self._analyze_with_engine(engine, moves)
+            return self._analyze_with_engine(engine, moves, progress_callback)
 
     # ------------------------------------------------------------------
     # Internal analysis pipeline
@@ -220,9 +340,10 @@ class StockfishAnalyzerService:
         self,
         engine: chess.engine.SimpleEngine,
         moves: list[chess.Move],
+        progress_callback: Callable[[int, int], None] | None = None,
     ) -> list[MoveEvaluation]:
         """Core analysis loop: evaluate every position, then build evaluations."""
-        position_infos = self._collect_position_evals(engine, moves)
+        position_infos = self._collect_position_evals(engine, moves, progress_callback)
         return self._build_evaluations(moves, position_infos)
 
     def _get_analysis_limit(self) -> chess.engine.Limit:
@@ -235,6 +356,7 @@ class StockfishAnalyzerService:
         self,
         engine: chess.engine.SimpleEngine,
         moves: list[chess.Move],
+        progress_callback: Callable[[int, int], None] | None = None,
     ) -> list[_PositionInfo]:
         """Evaluate N+1 positions (initial + after each move)."""
         board = chess.Board()
@@ -243,11 +365,15 @@ class StockfishAnalyzerService:
 
         # Analyze initial position
         infos.append(_analyze_position(engine, board, limit, self._multipv))
+        if progress_callback is not None:
+            progress_callback(1, len(moves) + 1)
 
         # Analyze position after each move
         for move in moves:
             board.push(move)
             infos.append(_analyze_position(engine, board, limit, self._multipv))
+            if progress_callback is not None:
+                progress_callback(len(infos), len(moves) + 1)
 
         logger.info("Collected evaluations for %d positions", len(infos))
         return infos
@@ -270,6 +396,10 @@ class StockfishAnalyzerService:
             move_san = board.san(move)
             best_move_san = self._get_best_move_san(board, info_before)
             top_moves = _build_candidates_san(board, info_before.candidates)
+            after_board = board.copy()
+            after_board.push(move)
+            reply = info_after.primary_candidate.pv if info_after.primary_candidate else []
+            played_line = [move_san, *pv_to_san(after_board, reply, max_moves=5)]
 
             cp_loss = _compute_centipawn_loss(
                 info_before.eval_white_cp,
@@ -286,12 +416,17 @@ class StockfishAnalyzerService:
                     eval_before=info_before.eval_white_cp,
                     eval_after=info_after.eval_white_cp,
                     centipawn_loss=round(cp_loss, 1),
-                    classification=classify_move(
+                    classification=classify_evaluation(
                         info_before.eval_white_cp,
                         info_after.eval_white_cp,
                         color,
+                        info_before.score,
+                        info_after.score,
                     ),
                     top_moves=top_moves,
+                    score_before=info_before.score,
+                    score_after=info_after.score,
+                    played_line=played_line,
                 )
             )
 
@@ -308,6 +443,6 @@ class StockfishAnalyzerService:
     @staticmethod
     def _get_best_move_san(board: chess.Board, info: _PositionInfo) -> str:
         """Extract the best move in SAN from position analysis."""
-        if not info.candidates:
+        if info.primary_candidate is None:
             return ""
-        return board.san(info.candidates[0].move)
+        return board.san(info.primary_candidate.move)

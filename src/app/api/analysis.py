@@ -1,56 +1,151 @@
 from __future__ import annotations
 
-import logging
 import uuid
+from collections.abc import AsyncIterator
+from typing import Literal
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import BigInteger, func, literal, select
 from sqlalchemy.orm import selectinload
 
-from app.core.dependencies import AsyncSessionDep, LLMCoachDep
+from app.api.analysis_queue import publish_attempt
+from app.core.config import settings
+from app.core.dependencies import AccessSessionIdDep, AsyncSessionDep
 from app.core.exceptions import AnalysisNotFoundError, GameNotFoundError
 from app.models.game import Game
 from app.models.game_analysis import GameAnalysis
-from app.schemas.analysis import AnalysisStatusRead, GameAnalysisRead
-from app.services.llm_coach import MoveCommentaryInput
-from app.services.pgn_parser import PGNParserService
-from app.utils.chess_helpers import moves_to_fens
+from app.models.side_review import SideReview
+from app.schemas.analysis import (
+    AnalysisStatusRead,
+    EngineStartBody,
+    ExplanationStartBody,
+    GameAnalysisRead,
+    MoveAnalysisRead,
+    SideReviewRead,
+)
+from app.services.game_review import GameReviewService
 
 router = APIRouter(prefix="/games/{game_id}/analysis", tags=["analysis"])
-logger = logging.getLogger(__name__)
-_NEXT_GAME_MOVES_CONTEXT = 10
+PlayerColor = Literal["white", "black"]
+_PUBLIC_ENGINE_CAPACITY_LOCK = 7_034_992_011
+
+
+def _public_access_enabled() -> bool:
+    """Keep older focused tests compatible with the new optional public gate."""
+    return bool(getattr(settings, "access_control_enabled", False))
+
+
+async def _get_analysis(
+    game_id: uuid.UUID,
+    session: AsyncSessionDep,
+    access_session_id: uuid.UUID | None,
+) -> tuple[Game, GameAnalysis]:
+    if _public_access_enabled():
+        game = await session.scalar(
+            select(Game).where(Game.id == game_id, Game.access_session_id == access_session_id)
+        )
+    else:
+        game = await session.get(Game, game_id)
+    if game is None:
+        raise GameNotFoundError("Партия не найдена")
+    result = await session.execute(
+        select(GameAnalysis).where(GameAnalysis.game_id == game_id)
+        .options(selectinload(GameAnalysis.moves))
+        .with_for_update(read=True)
+    )
+    analysis = result.scalar_one_or_none()
+    if analysis is None:
+        raise AnalysisNotFoundError("Анализ для этой партии не найден")
+    return game, analysis
+
+
+async def _get_review(
+    session: AsyncSessionDep, analysis_id: uuid.UUID, player_color: str | None,
+) -> SideReview | None:
+    if player_color not in ("white", "black"):
+        return None
+    result = await session.execute(
+        select(SideReview).where(
+            SideReview.game_analysis_id == analysis_id,
+            SideReview.player_color == player_color,
+        )
+    )
+    review = result.scalar_one_or_none()
+    return review if isinstance(review, SideReview) else None
+
+
+def _comment_text(comment: dict[str, str] | None) -> str | None:
+    if not comment:
+        return None
+    return "\n".join(comment.get(key, "") for key in (
+        "reason", "consequence", "alternative", "principle", "limitation",
+    ) if comment.get(key)) or None
 
 
 @router.get("", response_model=GameAnalysisRead)
 async def get_game_analysis(
     game_id: uuid.UUID,
     session: AsyncSessionDep,
+    player_color: PlayerColor | None = None,
+    access_session_id: AccessSessionIdDep = None,
 ) -> GameAnalysisRead:
-    """Get full analysis with per-move commentary for a game.
-
-    Returns the game-level summary alongside all per-move evaluations
-    ordered by move number (white before black within each move).
-    """
-    # Verify the game exists
-    game = await session.get(Game, game_id)
-    if game is None:
-        raise GameNotFoundError("Партия не найдена")
-
-    stmt = (
-        select(GameAnalysis)
-        .where(GameAnalysis.game_id == game_id)
-        .options(selectinload(GameAnalysis.moves))
+    """Read engine data and only the selected side's saved explanations."""
+    game, analysis = await _get_analysis(game_id, session, access_session_id)
+    review = await _get_review(session, analysis.id, player_color or game.player_color)
+    verified = analysis.score_version == 1
+    if review is not None and (
+        not verified
+        or not isinstance(review.context, dict)
+        or review.context.get("version") != 1
+        or review.context.get("player_color") != review.player_color
+        or review.context.get("engine_result_id") != str(analysis.engine_result_id)
+    ):
+        review = None
+    comments = (review.comments or {}) if verified and review is not None else {}
+    moves = []
+    ordered_moves = sorted(analysis.moves, key=lambda m: (m.move_number, m.color != "white"))
+    for index, record in enumerate(ordered_moves):
+        move = MoveAnalysisRead.model_validate(record)
+        move.llm_comment = _comment_text(comments.get(str(index)))
+        if not verified:
+            move.score_before = None
+            move.score_after = None
+            move.classification = None
+            move.eval_before = None
+            move.eval_after = None
+            move.centipawn_loss = None
+            move.top_moves = None
+            move.continuation_lines = None
+            move.played_line = None
+            move.best_move_san = None
+        else:
+            move.eval_before = move.score_before.cp if move.score_before else None
+            move.eval_after = move.score_after.cp if move.score_after else None
+        moves.append(move)
+    return GameAnalysisRead(
+        id=analysis.id, game_id=game_id, created_at=analysis.created_at,
+        status=analysis.status, moves=moves,
+        summary=review.summary if verified and review else None,
+        key_moments=(review.context or {}).get("moments", []) if verified and review else [],
+        coach_feedback=(
+            {"focus_points": review.recommendations or []} if verified and review else None
+        ),
+        accuracy_white=None, accuracy_black=None,
+        engine_status=analysis.engine_status or analysis.status,
+        engine_error=analysis.engine_error,
+        engine_attempt_id=analysis.engine_attempt_id, engine_result_id=analysis.engine_result_id,
+        engine_task_id=analysis.engine_task_id,
+        progress_current=analysis.progress_current or 0,
+        progress_total=analysis.progress_total or 0,
+        heartbeat_at=analysis.heartbeat_at, score_version=analysis.score_version,
+        review=SideReviewRead(
+            player_color=review.player_color, status=review.status, error=review.error,
+            context=review.context or {}, comments=review.comments or {}, summary=review.summary,
+            recommendations=review.recommendations or [], attempt_id=review.attempt_id,
+            task_id=review.task_id, usage=review.usage or {},
+        ) if verified and review else None,
     )
-    result = await session.execute(stmt)
-    analysis = result.scalar_one_or_none()
-
-    if analysis is None:
-        raise AnalysisNotFoundError("Анализ для этой партии не найден")
-
-    # Sort moves: by move_number ascending, white before black
-    analysis.moves.sort(key=lambda m: (m.move_number, m.color != "white"))
-    return analysis
 
 
 @router.get("/moves/{move_index}/commentary/stream")
@@ -58,122 +153,154 @@ async def stream_move_commentary(
     game_id: uuid.UUID,
     move_index: int,
     session: AsyncSessionDep,
-    llm_coach: LLMCoachDep,
+    player_color: PlayerColor | None = None,
+    access_session_id: AccessSessionIdDep = None,
 ) -> StreamingResponse:
-    """Stream LLM commentary for a single move via Server-Sent Events.
-
-    Returns text chunks as they are generated. Each SSE event has
-    ``data: <chunk>``. Use when move has no pre-generated commentary
-    or for real-time display.
-    """
+    """Read saved text only. Missing text never starts a provider request."""
     if move_index < 0:
         raise AnalysisNotFoundError("Индекс хода не может быть отрицательным")
-
-    game = await session.get(Game, game_id)
-    if game is None:
-        raise GameNotFoundError("Партия не найдена")
-
-    stmt = (
-        select(GameAnalysis)
-        .where(GameAnalysis.game_id == game_id)
-        .options(selectinload(GameAnalysis.moves))
-    )
-    result = await session.execute(stmt)
-    analysis = result.scalar_one_or_none()
-    if analysis is None:
-        raise AnalysisNotFoundError("Анализ для этой партии не найден")
-
-    # Sort moves to match frontend order
-    moves_sorted = sorted(analysis.moves, key=lambda m: (m.move_number, m.color != "white"))
-    if move_index >= len(moves_sorted):
+    analysis = await get_game_analysis(game_id, session, player_color, access_session_id)
+    if move_index >= len(analysis.moves):
         raise AnalysisNotFoundError("Индекс хода вне диапазона")
+    comment = analysis.moves[move_index].llm_comment
+    if not comment:
+        raise AnalysisNotFoundError("Сохранённого объяснения нет. Запустите генерацию явно.")
 
-    move_record = moves_sorted[move_index]
-    if move_record.llm_comment:
-        # Already have commentary - stream as single SSE event
-        comment = move_record.llm_comment or ""
+    async def saved_text() -> AsyncIterator[str]:
+        for line in comment.split("\n"):
+            yield f"data: {line}\n"
+        yield "\n"
 
-        async def _already_done() -> object:
-            for line in comment.split("\n"):
-                yield f"data: {line}\n"
-            yield "\n"
-
-        return StreamingResponse(
-            _already_done(),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-        )
-
-    # Build MoveCommentaryInput: need FEN from game replay
-    parser = PGNParserService()
-    parsed = parser.parse_pgn(game.pgn_text)
-    if not parsed:
-        raise AnalysisNotFoundError("Не удалось разобрать PGN партии для комментария")
-    fens = moves_to_fens(parsed[0].moves)
-    fen_before = fens[move_index] if move_index < len(fens) else ""
-
-    move_input = MoveCommentaryInput(
-        move_index=move_index,
-        move_number=move_record.move_number,
-        color=move_record.color,
-        fen_before=fen_before,
-        move_san=move_record.move_san or "",
-        best_move_san=move_record.best_move_san or "",
-        eval_before=move_record.eval_before or 0.0,
-        eval_after=move_record.eval_after or 0.0,
-        centipawn_loss=move_record.centipawn_loss or 0.0,
-        classification=move_record.classification or "good",
-        top_moves=(move_record.top_moves or []) if isinstance(move_record.top_moves, list) else [],
-        next_game_moves=[
-            _format_move_label(m.move_number, m.color, m.move_san or "?")
-            for m in moves_sorted[move_index + 1 : move_index + 1 + _NEXT_GAME_MOVES_CONTEXT]
-        ],
-    )
-
-    async def _stream() -> object:
-        chunks: list[str] = []
-        async for chunk in llm_coach.generate_single_move_commentary_stream(move_input):
-            chunks.append(chunk)
-            for line in chunk.split("\n"):
-                yield f"data: {line}\n"
-            yield "\n"
-
-        # Cache generated commentary to avoid repeated LLM calls for the same move.
-        comment = "".join(chunks).strip()
-        if comment:
-            move_record.llm_comment = comment
-            try:
-                await session.commit()
-            except Exception:
-                logger.exception("Failed to persist streamed commentary for game %s", game_id)
-
-    return StreamingResponse(
-        _stream(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    return StreamingResponse(saved_text(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-cache", "X-Accel-Buffering": "no",
+    })
 
 
 @router.get("/status", response_model=AnalysisStatusRead)
 async def get_analysis_status(
     game_id: uuid.UUID,
     session: AsyncSessionDep,
+    player_color: PlayerColor | None = None,
+    access_session_id: AccessSessionIdDep = None,
 ) -> AnalysisStatusRead:
-    """Check analysis status (pending / in_progress / done / failed).
-
-    Returns ``"pending"`` when no analysis record exists yet (the game
-    has been uploaded but the Celery task has not started).
-    """
-    stmt = select(GameAnalysis.status).where(GameAnalysis.game_id == game_id)
-    result = await session.execute(stmt)
-    status = result.scalar_one_or_none()
-
-    if status is None:
+    if _public_access_enabled():
+        game = await session.scalar(
+            select(Game).where(Game.id == game_id, Game.access_session_id == access_session_id)
+        )
+    else:
+        game = await session.get(Game, game_id)
+    if game is None:
+        raise GameNotFoundError("Партия не найдена")
+    result = await session.execute(
+        select(GameAnalysis).where(GameAnalysis.game_id == game_id).with_for_update(read=True)
+    )
+    analysis = result.scalar_one_or_none()
+    if analysis is None:
         return AnalysisStatusRead(game_id=game_id, status="pending")
+    review = await _get_review(session, analysis.id, player_color or game.player_color)
+    if review is not None and (
+        analysis.score_version != 1
+        or not isinstance(review.context, dict)
+        or review.context.get("version") != 1
+        or review.context.get("player_color") != review.player_color
+        or review.context.get("engine_result_id") != str(analysis.engine_result_id)
+    ):
+        review = None
+    response = AnalysisStatusRead(
+        game_id=game_id, status=analysis.status,
+        engine_status=analysis.engine_status or analysis.status,
+        engine_error=analysis.engine_error,
+        engine_attempt_id=analysis.engine_attempt_id, engine_task_id=analysis.engine_task_id,
+        progress_current=analysis.progress_current or 0,
+        progress_total=analysis.progress_total or 0,
+        heartbeat_at=analysis.heartbeat_at,
+        review_status=review.status if review else None,
+        review_error=review.error if review else None,
+    )
+    return response
 
-    return AnalysisStatusRead(game_id=game_id, status=status)
+
+@router.post("/start", response_model=AnalysisStatusRead)
+async def start_engine_analysis(
+    game_id: uuid.UUID,
+    body: EngineStartBody,
+    session: AsyncSessionDep,
+    access_session_id: AccessSessionIdDep = None,
+) -> AnalysisStatusRead:
+    if _public_access_enabled():
+        game, analysis = await _get_analysis(game_id, session, access_session_id)
+        if analysis.engine_status in {"queued", "in_progress"} or (
+            analysis.engine_status == "done" and analysis.score_version == 1
+        ):
+            return AnalysisStatusRead(
+                game_id=game_id,
+                status=analysis.status,
+                engine_status=analysis.engine_status,
+            )
+        await session.execute(
+            select(
+                func.pg_advisory_xact_lock(
+                    literal(_PUBLIC_ENGINE_CAPACITY_LOCK, type_=BigInteger)
+                )
+            )
+        )
+        active_count = await session.scalar(
+            select(func.count()).select_from(GameAnalysis).where(
+                GameAnalysis.game_id != game.id,
+                GameAnalysis.engine_status.in_(("queued", "in_progress")),
+            )
+        )
+        if active_count and active_count >= settings.public_max_active_engine_jobs:
+            await session.rollback()
+            raise HTTPException(
+                status_code=429,
+                detail="Сейчас выполняется анализ. Дождитесь его завершения и попробуйте позже.",
+            )
+    analysis, queued = await GameReviewService(session).queue_engine(
+        game_id, recover=body.recover, expected_attempt_id=body.expected_attempt_id,
+    )
+    await session.commit()
+    if queued:
+        published = await publish_attempt(
+            session, stage="engine", entity_id=analysis.id, game_id=game_id,
+            attempt_id=analysis.engine_attempt_id, task_id=analysis.engine_task_id,
+        )
+        if not published:
+            raise HTTPException(
+                status_code=503, detail="Очередь недоступна. Повторите запуск анализа.",
+            )
+    return AnalysisStatusRead(
+        game_id=game_id, status=analysis.status, engine_status=analysis.engine_status,
+    )
 
 
-def _format_move_label(move_number: int, color: str, move_san: str) -> str:
-    color_sep = "." if color == "white" else "..."
-    return f"{move_number}{color_sep}{move_san}"
+@router.post("/explanations", response_model=AnalysisStatusRead)
+async def start_explanations(
+    game_id: uuid.UUID,
+    body: ExplanationStartBody,
+    session: AsyncSessionDep,
+    access_session_id: AccessSessionIdDep = None,
+) -> AnalysisStatusRead:
+    if _public_access_enabled() or await session.get(Game, game_id) is None:
+        await _get_analysis(game_id, session, access_session_id)
+    if not (settings.llm_api_key or settings.litellm_base_url):
+        raise HTTPException(
+            status_code=503, detail="AI-тренер не настроен. Данные движка сохранены.",
+        )
+    review, queued = await GameReviewService(session).queue_explanations(
+        game_id, body.player_color, recover=body.recover,
+        expected_attempt_id=body.expected_attempt_id,
+    )
+    await session.commit()
+    if queued:
+        published = await publish_attempt(
+            session, stage="coach", entity_id=review.id, game_id=game_id,
+            attempt_id=review.attempt_id, task_id=review.task_id, player_color=body.player_color,
+        )
+        if not published:
+            raise HTTPException(
+                status_code=503, detail="Очередь недоступна. Объяснения можно повторить.",
+            )
+    return AnalysisStatusRead(
+        game_id=game_id, status="done", engine_status="done", review_status=review.status,
+    )

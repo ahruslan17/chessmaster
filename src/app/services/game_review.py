@@ -3,14 +3,18 @@ from __future__ import annotations
 import logging
 import uuid
 from collections import Counter
+from datetime import UTC, datetime
+from hashlib import sha256
 
-from sqlalchemy import delete, select
+from fastapi import HTTPException
+from sqlalchemy import BigInteger, delete, func, literal, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.exceptions import PGNParseError
 from app.models.game import Game
 from app.models.game_analysis import GameAnalysis
 from app.models.move_analysis import MoveAnalysis
-from app.services.opening_matcher import OpeningMatch, OpeningMatcher
+from app.models.side_review import SideReview
 from app.services.llm_coach import (
     GameSummaryInput,
     GameSummaryResult,
@@ -18,9 +22,10 @@ from app.services.llm_coach import (
     LLMCoachService,
     MoveCommentaryInput,
 )
+from app.services.opening_matcher import OpeningMatch, OpeningMatcher
 from app.services.pgn_parser import ParsedGame, PGNParserService
-from app.services.stockfish_analyzer import MoveEvaluation
-from app.utils.chess_helpers import compute_accuracy, moves_fingerprint, moves_to_fens
+from app.services.stockfish_analyzer import CandidateMove, EngineScore, MoveEvaluation
+from app.utils.chess_helpers import moves_fingerprint, moves_to_fens
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +61,8 @@ class GameReviewService:
         self,
         pgn_text: str,
         player_color: str | None = None,
+        access_session_id: uuid.UUID | None = None,
+        max_new_games: int | None = None,
     ) -> tuple[list[Game], list[uuid.UUID]]:
         """Parse PGN text and persist Game records to the database.
 
@@ -67,14 +74,45 @@ class GameReviewService:
         if not parsed_games:
             logger.warning("No games found in the provided PGN text")
             return [], []
+        if max_new_games is not None and len(parsed_games) > max_new_games:
+            raise HTTPException(
+                status_code=429,
+                detail="За одну гостевую сессию можно загрузить только одну партию",
+            )
+
+        fingerprints = [moves_fingerprint(parsed.moves) for parsed in parsed_games]
+        # Transaction-scoped locks also serialize importers before a row exists.
+        # Acquire the entire batch in deterministic order to avoid reversed-batch deadlocks.
+        lock_keys = {
+            int.from_bytes(sha256(fingerprint.encode()).digest()[:8], "big", signed=True)
+            for fingerprint in fingerprints
+        }
+        for key in sorted(lock_keys):
+            await self._session.execute(
+                select(func.pg_advisory_xact_lock(literal(key, type_=BigInteger)))
+            )
 
         db_games: list[Game] = []
         new_games: list[Game] = []
-        for parsed in parsed_games:
-            fingerprint = moves_fingerprint(parsed.moves)
+        batch_games: dict[tuple, Game] = {}
+        for parsed, fingerprint in zip(parsed_games, fingerprints, strict=True):
             opening_match = self._opening_matcher.match(parsed.moves)
-            existing = await self._find_game_by_fingerprint(fingerprint)
+            identity = _game_identity(parsed)
+            existing = batch_games.get(identity)
+            if existing is None:
+                existing = await self._find_game_by_fingerprint(
+                    fingerprint, parsed, access_session_id=access_session_id
+                )
             if existing is not None:
+                batch_games[identity] = existing
+                if player_color and existing.player_color not in (None, player_color):
+                    raise HTTPException(
+                        status_code=409,
+                        detail=("Партия уже сохранена для другой стороны. "
+                                "Откройте её и явно выберите сторону разбора."),
+                    )
+                if player_color and existing.player_color is None:
+                    existing.player_color = player_color
                 if opening_match is not None:
                     if not existing.opening_name:
                         existing.opening_name = opening_match.name
@@ -88,12 +126,14 @@ class GameReviewService:
                 )
                 continue
             game = _build_game_record(parsed, player_color, opening_match=opening_match)
+            game.access_session_id = access_session_id
             game.moves_fingerprint = fingerprint
             if game.id is None:
                 game.id = uuid.uuid4()
             self._session.add(game)
             db_games.append(game)
             new_games.append(game)
+            batch_games[identity] = game
 
         await self._session.flush()
         new_ids = [g.id for g in new_games if g.id is not None]
@@ -104,46 +144,198 @@ class GameReviewService:
         )
         return db_games, new_ids
 
-    async def _find_game_by_fingerprint(self, fingerprint: str) -> Game | None:
-        """Find an existing game with the given moves fingerprint."""
-        stmt = select(Game).where(Game.moves_fingerprint == fingerprint).limit(1)
+    async def _find_game_by_fingerprint(
+        self,
+        fingerprint: str,
+        parsed: ParsedGame | None = None,
+        access_session_id: uuid.UUID | None = None,
+    ) -> Game | None:
+        """Same moves alone do not identify a game: compare normalized headers too."""
+        stmt = select(Game).where(Game.moves_fingerprint == fingerprint)
+        if access_session_id is not None:
+            stmt = stmt.where(Game.access_session_id == access_session_id)
+        stmt = stmt.execution_options(populate_existing=True)
         result = await self._session.execute(stmt)
-        return result.scalar_one_or_none()
+        for game in result.scalars():
+            if parsed is None:
+                return game
+            try:
+                stored = self._pgn_parser.parse_pgn(game.pgn_text)
+            except PGNParseError:
+                logger.warning("Skipping invalid stored PGN for game %s during import", game.id)
+                continue
+            if stored and _game_identity(stored[0]) == _game_identity(parsed):
+                return game
+        return None
 
     # ------------------------------------------------------------------
     # Analysis lifecycle
     # ------------------------------------------------------------------
 
+    async def _lock_game_analysis(self, game_id: uuid.UUID) -> tuple[Game, GameAnalysis | None]:
+        # Always lock parent first: serializes creation without swallowing DB errors.
+        result = await self._session.execute(
+            select(Game).where(Game.id == game_id).with_for_update()
+        )
+        game = result.scalar_one_or_none()
+        if game is None:
+            raise HTTPException(status_code=404, detail="Партия не найдена")
+        result = await self._session.execute(
+            select(GameAnalysis).where(GameAnalysis.game_id == game_id).with_for_update()
+        )
+        return game, result.scalar_one_or_none()
+
+    async def queue_engine(
+        self, game_id: uuid.UUID, recover: bool = False,
+        expected_attempt_id: uuid.UUID | None = None,
+    ) -> tuple[GameAnalysis, bool]:
+        """Persist attempt; caller commits before publishing with engine_task_id.
+
+        Crash between commit and publication leaves queued, never auto-expires.
+        Explicit recovery must provide the displayed expected_attempt_id (including null).
+        """
+        game, analysis = await self._lock_game_analysis(game_id)
+        if recover and (analysis.engine_attempt_id if analysis else None) != expected_attempt_id:
+            raise HTTPException(
+                status_code=409, detail="Попытка анализа уже изменилась; обновите страницу"
+            )
+        if analysis is None:
+            analysis = GameAnalysis(id=uuid.uuid4(), game_id=game_id)
+            self._session.add(analysis)
+        elif not recover and (
+            analysis.engine_status in {"queued", "in_progress"}
+            or (analysis.engine_status == "done" and analysis.score_version == 1)
+        ):
+            return analysis, False
+        active_reviews = await self._session.execute(
+            select(SideReview).where(
+                SideReview.game_analysis_id == analysis.id,
+                SideReview.status.in_({"queued", "in_progress"}),
+            ).with_for_update()
+        )
+        for review in active_reviews.scalars():
+            review.status = "partial" if review.comments else "failed"
+            review.error = "Объяснение остановлено: запущена новая попытка анализа движком"
+            review.heartbeat_at = datetime.now(UTC)
+        analysis.engine_attempt_id = uuid.uuid4()
+        analysis.engine_task_id = str(uuid.uuid4())
+        analysis.engine_status = "queued"
+        analysis.status = "pending"
+        analysis.engine_error = None
+        analysis.progress_current = 0
+        parsed = self._pgn_parser.parse_pgn(game.pgn_text)
+        analysis.progress_total = len(parsed[0].moves) + 1 if parsed else 0
+        analysis.heartbeat_at = None
+        await self._session.flush()
+        return analysis, True
+
+    async def queue_explanations(
+        self, game_id: uuid.UUID, player_color: str, recover: bool = False,
+        expected_attempt_id: uuid.UUID | None = None,
+    ) -> tuple[SideReview, bool]:
+        """Save validated side-scoped context before coach task publication."""
+        from app.services.review_moments import build_review_context
+
+        if player_color not in {"white", "black"}:
+            raise HTTPException(status_code=422, detail="Выберите белую или чёрную сторону")
+        game, analysis = await self._lock_game_analysis(game_id)
+        if (analysis is None or analysis.engine_status != "done" or analysis.score_version != 1
+                or analysis.engine_result_id is None):
+            raise HTTPException(
+                status_code=409, detail="Сначала выполните актуальный анализ движком"
+            )
+        result = await self._session.execute(
+            select(SideReview).where(
+                SideReview.game_analysis_id == analysis.id, SideReview.player_color == player_color
+            ).with_for_update()
+        )
+        review = result.scalar_one_or_none()
+        if recover and (review.attempt_id if review else None) != expected_attempt_id:
+            raise HTTPException(
+                status_code=409, detail="Попытка объяснения уже изменилась; обновите страницу"
+            )
+        same_result = review is not None and (
+            (review.context or {}).get("engine_result_id") == str(analysis.engine_result_id)
+        )
+        if same_result and not recover and review.status in {"queued", "in_progress", "done"}:
+            return review, False
+        result = await self._session.execute(
+            select(MoveAnalysis).where(MoveAnalysis.game_analysis_id == analysis.id)
+            .order_by(MoveAnalysis.move_number, MoveAnalysis.color.desc())
+        )
+        records = list(result.scalars())
+        if not records or any(r.score_before is None or r.score_after is None for r in records):
+            raise HTTPException(
+                status_code=409, detail="Результаты движка неполны; повторите анализ"
+            )
+        try:
+            context = build_review_context(
+                game.pgn_text, [_restore_evaluation(r) for r in records], player_color
+            )
+        except (ValueError, TypeError, KeyError) as exc:
+            raise HTTPException(
+                status_code=409, detail="Контекст движка некорректен; повторите анализ"
+            ) from exc
+        context["engine_result_id"] = str(analysis.engine_result_id)
+        if review is None:
+            review = SideReview(
+                id=uuid.uuid4(), game_analysis_id=analysis.id, player_color=player_color
+            )
+            self._session.add(review)
+        if review.context is not None and not same_result:
+            # Keep prior generation privately; never merge stale educational text.
+            review.stale_result = {
+                "context": review.context, "comments": review.comments, "summary": review.summary,
+                "recommendations": review.recommendations, "usage": review.usage,
+            }
+            review.context = None
+            review.comments = None
+            review.summary = None
+            review.recommendations = None
+            review.usage = None
+        if review.context is None:
+            review.context = context
+        review.attempt_id = uuid.uuid4()
+        review.task_id = str(uuid.uuid4())
+        review.heartbeat_at = None
+        review.error = None
+        if not review.context["moments"]:
+            review.status = "done"
+            review.error = "context_empty"
+            review.task_id = None
+            await self._session.flush()
+            return review, False
+        review.status = "queued"
+        await self._session.flush()
+        return review, True
+
+    async def mark_publication_failed(
+        self, stage: str, entity_id: uuid.UUID, attempt_id: uuid.UUID, message: str
+    ) -> None:
+        """Broker failure may only fail its own still-queued attempt."""
+        if stage == "engine":
+            stmt = update(GameAnalysis).where(
+                GameAnalysis.id == entity_id, GameAnalysis.engine_attempt_id == attempt_id,
+                GameAnalysis.engine_status == "queued",
+            ).values(engine_status="failed", status="failed", engine_error=message[:2000])
+        elif stage in {"explanations", "coach"}:
+            stmt = update(SideReview).where(
+                SideReview.id == entity_id, SideReview.attempt_id == attempt_id,
+                SideReview.status == "queued",
+            ).values(status="failed", error=message[:2000])
+        else:
+            raise ValueError("Unknown publication stage")
+        await self._session.execute(stmt)
+
     async def init_analysis(self, game_id: uuid.UUID) -> GameAnalysis:
         """Get existing or create new GameAnalysis for the game.
 
-        If an analysis already exists: reuse it. If status is 'done', return as-is
-        (caller should skip pipeline). If 'in_progress' or 'failed', reset and reuse.
+        Legacy compatibility only: never reset existing results or active attempts.
         """
-        stmt = select(GameAnalysis).where(GameAnalysis.game_id == game_id)
-        result = await self._session.execute(stmt)
-        existing = result.scalar_one_or_none()
+        _, existing = await self._lock_game_analysis(game_id)
         if existing is not None:
-            if existing.status == "done":
-                logger.info("Analysis already done for game %s, reusing %s", game_id, existing.id)
-                return existing
-            # Reset for re-run: clear old move data, set in_progress
-            await self._session.execute(
-                delete(MoveAnalysis).where(MoveAnalysis.game_analysis_id == existing.id)
-            )
-            existing.summary = None
-            existing.opening_assessment = None
-            existing.middlegame_assessment = None
-            existing.endgame_assessment = None
-            existing.key_moments = None
-            existing.coach_feedback = None
-            existing.accuracy_white = None
-            existing.accuracy_black = None
-            existing.status = "in_progress"
-            await self._session.flush()
-            logger.info("Reusing analysis %s for game %s (status reset)", existing.id, game_id)
             return existing
-        analysis = GameAnalysis(game_id=game_id, status="in_progress")
+        analysis = GameAnalysis(game_id=game_id, status="pending", engine_status="pending")
         self._session.add(analysis)
         await self._session.flush()
         logger.info("Initialized analysis %s for game %s", analysis.id, game_id)
@@ -154,59 +346,62 @@ class GameReviewService:
         game_analysis_id: uuid.UUID,
         evaluations: list[MoveEvaluation],
         opening_move_count: int = 0,
-    ) -> None:
+        attempt_id: uuid.UUID | None = None,
+        engine_metadata: dict | None = None,
+    ) -> bool:
         """Persist Stockfish evaluation results.
 
-        Creates MoveAnalysis records and computes accuracy stats.
-        Moves within the opening (index <
-        opening_move_count) are marked as classification='theory'.
+        Replace moves atomically only while owning the active engine attempt.
+        Opening provenance never overrides engine move classification.
         """
-        analysis = await self._session.get(GameAnalysis, game_analysis_id)
+        result = await self._session.execute(
+            select(GameAnalysis).where(GameAnalysis.id == game_analysis_id).with_for_update()
+        )
+        analysis = result.scalar_one_or_none()
         if analysis is None:
             raise ValueError(f"GameAnalysis {game_analysis_id} not found")
-
-        # Create move analysis records
-        for idx, evaluation in enumerate(evaluations):
-            classification = (
-                "theory"
-                if opening_move_count > 0 and idx < opening_move_count
-                else evaluation.classification
-            )
-            move_record = _build_move_analysis(
-                game_analysis_id, evaluation, classification_override=classification
-            )
-            self._session.add(move_record)
-
-        # Compute accuracy
-        white_losses = [ev.centipawn_loss for ev in evaluations if ev.color == "white"]
-        black_losses = [ev.centipawn_loss for ev in evaluations if ev.color == "black"]
-        analysis.accuracy_white = compute_accuracy(white_losses)
-        analysis.accuracy_black = compute_accuracy(black_losses)
-
-        await self._session.flush()
-        logger.info(
-            "Saved %d move evaluations for analysis %s (white=%.1f%%, black=%.1f%%)",
-            len(evaluations),
-            game_analysis_id,
-            analysis.accuracy_white,
-            analysis.accuracy_black,
+        if attempt_id is None and analysis.engine_attempt_id is not None:
+            return False
+        if attempt_id is not None and (
+            analysis.engine_attempt_id != attempt_id or analysis.engine_status != "in_progress"
+        ):
+            return False
+        await self._session.execute(
+            delete(MoveAnalysis).where(MoveAnalysis.game_analysis_id == game_analysis_id)
         )
+        for evaluation in evaluations:
+            move_record = _build_move_analysis(game_analysis_id, evaluation)
+            self._session.add(move_record)
+        analysis.accuracy_white = None
+        analysis.accuracy_black = None
+        if attempt_id is not None:
+            analysis.engine_result_id = attempt_id
+            analysis.score_version = 1
+            analysis.engine_status = "done"
+            analysis.status = "done"
+            analysis.engine_error = None
+            analysis.progress_current = len(evaluations) + 1
+            analysis.progress_total = len(evaluations) + 1
+            analysis.heartbeat_at = datetime.now(UTC)
+            analysis.engine_metadata = engine_metadata
+        await self._session.flush()
+        return True
 
     async def mark_analysis_done(self, game_id: uuid.UUID) -> None:
         """Set analysis status to 'done' for the given game."""
-        stmt = select(GameAnalysis).where(GameAnalysis.game_id == game_id)
+        stmt = select(GameAnalysis).where(GameAnalysis.game_id == game_id).with_for_update()
         result = await self._session.execute(stmt)
         analysis = result.scalar_one_or_none()
-        if analysis is not None:
+        if analysis is not None and analysis.engine_attempt_id is None:
             analysis.status = "done"
             await self._session.flush()
 
     async def mark_analysis_failed(self, game_id: uuid.UUID) -> None:
         """Set analysis status to 'failed' for the given game."""
-        stmt = select(GameAnalysis).where(GameAnalysis.game_id == game_id)
+        stmt = select(GameAnalysis).where(GameAnalysis.game_id == game_id).with_for_update()
         result = await self._session.execute(stmt)
         analysis = result.scalar_one_or_none()
-        if analysis is not None:
+        if analysis is not None and analysis.engine_attempt_id is None:
             analysis.status = "failed"
             await self._session.flush()
             logger.warning("Marked analysis as failed for game %s", game_id)
@@ -235,6 +430,11 @@ class GameReviewService:
         if self._llm_coach is None:
             logger.info("LLM coach not configured, skipping commentary enrichment")
             return
+
+        analysis = await self._session.get(GameAnalysis, game_analysis_id)
+        if (analysis is None or analysis.engine_attempt_id is not None
+                or analysis.score_version is not None):
+            raise ValueError("Legacy commentary cannot write versioned engine analyses")
 
         # 1. Reconstruct FENs from the game PGN
         parsed_games = self._pgn_parser.parse_pgn(game.pgn_text)
@@ -278,6 +478,12 @@ class GameReviewService:
         summary: GameSummaryResult | None,
     ) -> None:
         """Write LLM commentary and summary to DB records."""
+        result = await self._session.execute(
+            select(GameAnalysis).where(GameAnalysis.id == game_analysis_id).with_for_update()
+        )
+        owner = result.scalar_one_or_none()
+        if owner is None or owner.engine_attempt_id is not None or owner.score_version is not None:
+            raise ValueError("Legacy commentary cannot write versioned engine analyses")
         # Build a lookup keyed by (move_number, color) for robust matching
         commentary_lookup: dict[tuple[int, str], str] = {}
         for move_input in move_inputs:
@@ -371,6 +577,9 @@ def _build_move_analysis(
         classification=classification,
         top_moves=evaluation.top_moves_as_json(),
         continuation_lines=evaluation.continuation_lines_as_json(),
+        score_before=evaluation.score_before.to_json() if evaluation.score_before else None,
+        score_after=evaluation.score_after.to_json() if evaluation.score_after else None,
+        played_line=evaluation.played_line,
     )
 
 
@@ -383,11 +592,7 @@ def _build_move_commentary_inputs(
     inputs: list[MoveCommentaryInput] = []
     move_labels = [_format_move_label(ev.move_number, ev.color, ev.move_san) for ev in evaluations]
     for idx, evaluation in enumerate(evaluations):
-        classification = (
-            "theory"
-            if opening_move_count > 0 and idx < opening_move_count
-            else evaluation.classification
-        )
+        classification = evaluation.classification
         fen = fens[idx] if idx < len(fens) else ""
         next_game_moves = move_labels[idx + 1 : idx + 1 + _NEXT_GAME_MOVES_CONTEXT]
         inputs.append(
@@ -431,9 +636,6 @@ def _build_game_summary_input(
         m for m in move_inputs if m.classification in _KEY_MOMENT_CLASSIFICATIONS
     ]
 
-    white_losses = [ev.centipawn_loss for ev in evaluations if ev.color == "white"]
-    black_losses = [ev.centipawn_loss for ev in evaluations if ev.color == "black"]
-
     return GameSummaryInput(
         white_player=game.white_player,
         black_player=game.black_player,
@@ -441,8 +643,35 @@ def _build_game_summary_input(
         opening_name=game.opening_name,
         eco_code=game.eco_code,
         total_moves=len(evaluations),
-        accuracy_white=compute_accuracy(white_losses),
-        accuracy_black=compute_accuracy(black_losses),
+        accuracy_white=None,
+        accuracy_black=None,
         classification_counts=classification_counts,
         key_moments=key_moments,
+    )
+
+
+def _game_identity(parsed: ParsedGame) -> tuple:
+    technical = {"playercolor", "annotator", "plycount", "analysis", "analysedby"}
+    headers = tuple(sorted(
+        (k, v.strip()) for k, v in parsed.headers.items() if k.lower() not in technical
+    ))
+    return headers, tuple(move.uci() for move in parsed.moves)
+
+
+def _restore_evaluation(record: MoveAnalysis) -> MoveEvaluation:
+    """Restore typed scores without ever guessing mate from legacy float fields."""
+    candidates = [
+        CandidateMove(
+            move_san=item["move_san"], eval_cp=item["eval_cp"], pv_san=item.get("pv_san", []),
+            score=EngineScore(**item["score"]) if item.get("score") else None,
+        ) for item in (record.top_moves or [])
+    ]
+    return MoveEvaluation(
+        move_number=record.move_number, color=record.color, move_san=record.move_san,
+        best_move_san=record.best_move_san or "", eval_before=record.eval_before,
+        eval_after=record.eval_after, centipawn_loss=record.centipawn_loss,
+        classification=record.classification or "good", top_moves=candidates,
+        score_before=EngineScore(**record.score_before) if record.score_before else None,
+        score_after=EngineScore(**record.score_after) if record.score_after else None,
+        played_line=record.played_line or [],
     )

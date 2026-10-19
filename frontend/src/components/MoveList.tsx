@@ -38,7 +38,7 @@ export function MoveList({
       </div>
 
       <div className="max-h-72 overflow-y-auto px-2.5 py-2.5">
-        <div className="columns-2 gap-1.5 sm:columns-3 lg:columns-4">
+        <div className="grid gap-1.5 [grid-template-columns:repeat(auto-fit,minmax(9rem,1fr))]">
           {grouped.map(({ moveNumber, white, black }) => (
             <div
               key={moveNumber}
@@ -101,4 +101,3 @@ function MoveChip({
     </button>
   );
 }
-

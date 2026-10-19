@@ -8,14 +8,17 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.api.access import ACCESS_COOKIE
 from app.api.router import api_router
 from app.core.config import settings
+from app.core.database import async_session_factory
 from app.core.exceptions import (
     AnalysisNotFoundError,
     GameNotFoundError,
     PGNParseError,
     ReportNotFoundError,
 )
+from app.services.access import get_active_session
 from app.services.llm_coach import LLMCoachError
 
 logger = logging.getLogger(__name__)
@@ -74,6 +77,33 @@ def create_app() -> FastAPI:
     )
     app.include_router(api_router)
     _register_exception_handlers(app)
+
+    @app.middleware("http")
+    async def require_public_access(request: Request, call_next):
+        access_enabled = getattr(settings, "access_control_enabled", False)
+        if not access_enabled or not request.url.path.startswith("/api/"):
+            return await call_next(request)
+        if request.url.path in {
+            "/api/health",
+            "/api/access/activate",
+            "/api/access/config",
+            "/api/access/status",
+        }:
+            return await call_next(request)
+        if request.url.path.startswith("/api/reports"):
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Отчёты недоступны в гостевом режиме"},
+            )
+        async with async_session_factory() as session:
+            access_session = await get_active_session(
+                session, request.cookies.get(ACCESS_COOKIE)
+            )
+            if access_session is None:
+                return JSONResponse(status_code=401, content={"detail": "Введите код доступа"})
+            request.state.access_session_id = str(access_session.id)
+            request.state.access_expires_at = access_session.expires_at
+        return await call_next(request)
     return app
 
 

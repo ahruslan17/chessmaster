@@ -3,14 +3,15 @@ import * as api from "../api/client";
 
 export function useReports(params?: Parameters<typeof api.listReports>[0]) {
   return useQuery({
-    queryKey: ["reports", params],
+    // New cache namespace excludes pre-migration recommendations and accuracy prose.
+    queryKey: ["reports", "verified-content-v2", params],
     queryFn: () => api.listReports(params ?? {}),
   });
 }
 
 export function useReport(reportId: string | null) {
   return useQuery({
-    queryKey: ["report", reportId],
+    queryKey: ["report", "verified-content-v2", reportId],
     queryFn: () => api.getReport(reportId!),
     enabled: !!reportId,
   });

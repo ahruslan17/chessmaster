@@ -1,6 +1,7 @@
 import { useState, useRef } from "react";
 import { useUploadPgn, useImportPgnText } from "../hooks/useGames";
 import type { GameRead } from "../api/types";
+import { ApiError } from "../api/client";
 
 interface GameUploadProps {
   onUploaded?: (games: GameRead[]) => void;
@@ -13,6 +14,7 @@ export function GameUpload({ onUploaded }: GameUploadProps) {
   const [playerColor, setPlayerColor] = useState<"white" | "black" | undefined>();
   const [pgnText, setPgnText] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [importConflict, setImportConflict] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const uploadFile = useUploadPgn();
@@ -23,6 +25,11 @@ export function GameUpload({ onUploaded }: GameUploadProps) {
   const handleFileSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     setError(null);
+    setImportConflict(false);
+    if (!playerColor) {
+      setError("Выберите сторону, за которую вы играли");
+      return;
+    }
     const file = inputRef.current?.files?.[0];
     if (!file) {
       setError("Выберите PGN-файл");
@@ -33,6 +40,7 @@ export function GameUpload({ onUploaded }: GameUploadProps) {
       onUploaded?.(games);
       inputRef.current!.value = "";
     } catch (err) {
+      setImportConflict(err instanceof ApiError && err.status === 409);
       setError(err instanceof Error ? err.message : "Не удалось загрузить файл");
     }
   };
@@ -40,6 +48,11 @@ export function GameUpload({ onUploaded }: GameUploadProps) {
   const handlePasteSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     setError(null);
+    setImportConflict(false);
+    if (!playerColor) {
+      setError("Выберите сторону, за которую вы играли");
+      return;
+    }
     const text = pgnText.trim();
     if (!text) {
       setError("Вставьте текст PGN");
@@ -50,6 +63,7 @@ export function GameUpload({ onUploaded }: GameUploadProps) {
       onUploaded?.(games);
       setPgnText("");
     } catch (err) {
+      setImportConflict(err instanceof ApiError && err.status === 409);
       setError(err instanceof Error ? err.message : "Не удалось импортировать PGN");
     }
   };
@@ -63,7 +77,7 @@ export function GameUpload({ onUploaded }: GameUploadProps) {
     >
       <h3 className="mb-4 text-lg font-semibold text-stone-800 dark:text-stone-100">Импорт PGN</h3>
 
-      <div className="mb-4 flex gap-2 border-b border-stone-300 pb-3 dark:border-stone-600">
+      <div className="mb-4 flex flex-wrap gap-2 border-b border-stone-300 pb-3 dark:border-stone-600">
         <button
           type="button"
           onClick={() => setMode("paste")}
@@ -91,10 +105,11 @@ export function GameUpload({ onUploaded }: GameUploadProps) {
       <div className="space-y-4">
         {mode === "paste" ? (
           <div>
-            <label className="mb-2 block text-sm text-stone-600 dark:text-stone-400">
+            <label htmlFor="pgn-text" className="mb-2 block text-sm text-stone-600 dark:text-stone-400">
               Текст PGN
             </label>
             <textarea
+              id="pgn-text"
               value={pgnText}
               onChange={(event) => setPgnText(event.target.value)}
               placeholder={`Вставьте PGN, например:\n[Event "Casual Game"]\n[White "Player1"]\n[Black "Player2"]\n[Result "1-0"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 a6...`}
@@ -104,8 +119,9 @@ export function GameUpload({ onUploaded }: GameUploadProps) {
           </div>
         ) : (
           <div>
-            <label className="mb-2 block text-sm text-stone-600 dark:text-stone-400">PGN-файл</label>
+            <label htmlFor="pgn-file" className="mb-2 block text-sm text-stone-600 dark:text-stone-400">PGN-файл</label>
             <input
+              id="pgn-file"
               ref={inputRef}
               type="file"
               accept=".pgn,text/plain"
@@ -115,21 +131,25 @@ export function GameUpload({ onUploaded }: GameUploadProps) {
         )}
 
         <div>
-          <label className="mb-2 block text-sm text-stone-600 dark:text-stone-400">Ваш цвет (необязательно)</label>
+          <label htmlFor="player-color" className="mb-2 block text-sm text-stone-600 dark:text-stone-400">Ваш цвет (обязательно)</label>
           <select
+            id="player-color"
+            required
             value={playerColor ?? ""}
             onChange={(event) =>
               setPlayerColor((event.target.value as "white" | "black" | "") || undefined)
             }
             className="w-full rounded border border-stone-400 bg-white px-4 py-2 text-stone-800 focus:border-chess-highlight focus:outline-none dark:border-stone-600 dark:bg-chess-dark dark:text-stone-200"
           >
-            <option value="">Любой</option>
+            <option value="" disabled>Выберите вашу сторону</option>
             <option value="white">Белые</option>
             <option value="black">Черные</option>
           </select>
         </div>
 
-        {error && <p className="text-sm text-red-400">{error}</p>}
+        <p className="text-sm text-stone-600 dark:text-stone-400">Импорт сохраняет новую партию и ставит анализ движком в очередь. Объяснения выбранной стороны запускаются отдельно в просмотре.</p>
+        {error && <p role="alert" className="break-words text-sm text-red-400">{error}</p>}
+        {importConflict && onUploaded && <button type="button" onClick={() => onUploaded([])} className="rounded border border-stone-400 px-3 py-2 text-sm dark:border-stone-600">Найти сохранённую партию в библиотеке</button>}
 
         <button
           type="submit"

@@ -19,6 +19,13 @@ celery_app.conf.update(
     task_track_started=True,
     task_acks_late=True,
     worker_prefetch_multiplier=1,  # one task at a time (CPU-bound Stockfish)
+    task_publish_retry=False,
+    broker_connection_timeout=5,
+    broker_transport_options={
+        "socket_connect_timeout": 5,
+        "socket_timeout": 5,
+        "retry_on_timeout": False,
+    },
 )
 
 # Auto-discover tasks in app.tasks package

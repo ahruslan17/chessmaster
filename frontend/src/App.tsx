@@ -1,5 +1,6 @@
-import { BrowserRouter, Link, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Link, Navigate, Route, Routes, useParams } from "react-router-dom";
 
+import { AccessGate, usePublicPreview } from "./components/AccessGate";
 import { useTheme } from "./contexts/ThemeContext";
 import { GameLibrary } from "./pages/GameLibrary";
 import { GameViewer } from "./pages/GameViewer";
@@ -31,14 +32,24 @@ function ThemeToggle() {
 
 export default function App() {
   return (
+    <AccessGate>
+      <Application />
+    </AccessGate>
+  );
+}
+
+function Application() {
+  const publicPreview = usePublicPreview();
+
+  return (
     <BrowserRouter>
       <div className="min-h-screen bg-stone-100 text-stone-800 dark:bg-chess-dark dark:text-stone-200">
-        <header className="border-b border-stone-300 bg-stone-200/80 px-6 py-4 dark:border-stone-700 dark:bg-chess-light">
-          <nav className="mx-auto flex max-w-7xl items-center justify-between">
+        <header className="border-b border-stone-300 bg-stone-200/80 px-3 py-4 sm:px-6 dark:border-stone-700 dark:bg-chess-light">
+          <nav className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3">
             <Link to="/" className="text-xl font-semibold text-stone-800 dark:text-stone-100">
               Chess Master
             </Link>
-            <div className="flex items-center gap-4">
+            <div className="flex flex-wrap items-center gap-3">
               <Link
                 to="/"
                 className="text-stone-600 transition hover:text-stone-900 dark:text-stone-200 dark:hover:text-stone-100"
@@ -51,28 +62,38 @@ export default function App() {
               >
                 Дебюты
               </Link>
-              <Link
-                to="/diary"
-                className="text-stone-600 transition hover:text-stone-900 dark:text-stone-200 dark:hover:text-stone-100"
-              >
-                Дневник
-              </Link>
+              {!publicPreview && (
+                <Link
+                  to="/diary"
+                  className="text-stone-600 transition hover:text-stone-900 dark:text-stone-200 dark:hover:text-stone-100"
+                >
+                  Дневник
+                </Link>
+              )}
               <ThemeToggle />
             </div>
           </nav>
         </header>
 
-        <main className="mx-auto max-w-7xl px-6 py-8">
+        <main className="mx-auto max-w-7xl px-3 py-6 sm:px-6 sm:py-8">
           <Routes>
             <Route path="/" element={<GameLibrary />} />
-            <Route path="/games/:gameId" element={<GameViewer />} />
+            <Route path="/games/:gameId" element={<GameViewerRoute />} />
             <Route path="/openings" element={<Openings />} />
-            <Route path="/diary" element={<Diary />} />
-            <Route path="/reports" element={<Navigate to="/diary" replace />} />
+            <Route
+              path="/diary"
+              element={publicPreview ? <Navigate to="/" replace /> : <Diary />}
+            />
+            <Route path="/reports" element={<Navigate to={publicPreview ? "/" : "/diary"} replace />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
       </div>
-    </BrowserRouter>
+      </BrowserRouter>
   );
+}
+
+function GameViewerRoute() {
+  const { gameId } = useParams<{ gameId: string }>();
+  return <GameViewer key={gameId} />;
 }

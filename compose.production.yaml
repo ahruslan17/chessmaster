@@ -1,0 +1,107 @@
+name: chessmaster
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    mem_limit: 192m
+    cpus: 0.25
+    environment:
+      POSTGRES_USER: chess
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: chess_master
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chess -d chess_master"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    mem_limit: 64m
+    cpus: 0.1
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "48mb", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.4
+    ports:
+      - "127.0.0.1:18080:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+    environment: &app_environment
+      DATABASE_URL: postgresql+asyncpg://chess:${POSTGRES_PASSWORD}@postgres:5432/chess_master
+      REDIS_URL: redis://redis:6379/0
+      STOCKFISH_PATH: /usr/games/stockfish
+      STOCKFISH_TIME_LIMIT: "0.25"
+      STOCKFISH_THREADS: "1"
+      STOCKFISH_MULTIPV: "3"
+      CELERY_CONCURRENCY: "1"
+      LLM_API_KEY: ""
+      LITELLM_BASE_URL: ""
+      APP_ENV: production
+      APP_DEBUG: "false"
+      ACCESS_CONTROL_ENABLED: "true"
+      ACCESS_CODE_SECRET: ${ACCESS_CODE_SECRET:?ACCESS_CODE_SECRET is required}
+      ACCESS_SESSION_MINUTES: "15"
+      ACCESS_COOKIE_SECURE: "true"
+      PUBLIC_MAX_GAMES_PER_SESSION: "1"
+      PUBLIC_MAX_ACTIVE_ENGINE_JOBS: "1"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: 1
+    command: ["uv", "run", "celery", "-A", "app.core.celery_app", "worker", "--loglevel=info", "--concurrency=1"]
+    pids_limit: 64
+    environment: *app_environment
+    depends_on:
+      api:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    mem_limit: 64m
+    cpus: 0.1
+    ports:
+      - "127.0.0.1:18081:80"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:

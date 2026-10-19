@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -29,7 +30,7 @@ class PgnImportBody(BaseModel):
     """Schema for pasting PGN text (no file upload)."""
 
     pgn_text: str
-    player_color: str | None = None  # "white" | "black"
+    player_color: Literal["white", "black"] | None = None
 
 
 class GameRead(GameBase):

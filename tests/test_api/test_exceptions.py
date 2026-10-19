@@ -21,7 +21,7 @@ async def test_game_not_found_returns_404(
     response = await client.get(f"/api/games/{uuid.uuid4()}")
 
     assert response.status_code == 404
-    assert "not found" in response.json()["detail"].lower()
+    assert response.json()["detail"] == "Партия не найдена"
 
 
 async def test_analysis_not_found_returns_404(
@@ -39,7 +39,7 @@ async def test_analysis_not_found_returns_404(
     response = await client.get(f"/api/games/{game.id}/analysis")
 
     assert response.status_code == 404
-    assert "analysis" in response.json()["detail"].lower()
+    assert response.json()["detail"] == "Анализ для этой партии не найден"
 
 
 async def test_report_not_found_returns_404(
@@ -52,7 +52,7 @@ async def test_report_not_found_returns_404(
     response = await client.get(f"/api/reports/{uuid.uuid4()}")
 
     assert response.status_code == 404
-    assert "not found" in response.json()["detail"].lower()
+    assert response.json()["detail"] == "Отчёт не найден"
 
 
 def test_app_error_inheritance() -> None:

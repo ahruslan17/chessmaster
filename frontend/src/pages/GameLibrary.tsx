@@ -10,7 +10,7 @@ export function GameLibrary() {
   const [resultFilter, setResultFilter] = useState<string>("");
   const [openingFilter, setOpeningFilter] = useState("");
 
-  const { data: games = [], isLoading } = useGames({
+  const { data: games = [], isLoading, error, refetch } = useGames({
     result: resultFilter || undefined,
     opening_name: openingFilter || undefined,
   });
@@ -24,7 +24,7 @@ export function GameLibrary() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold text-stone-800 dark:text-stone-100">Библиотека партий</h1>
         <button
           onClick={() => setShowUpload((show) => !show)}
@@ -39,12 +39,13 @@ export function GameLibrary() {
       )}
 
       <div className="flex flex-wrap gap-4">
-        <div>
-          <label className="mb-1 block text-sm text-stone-500">Результат</label>
+        <div className="min-w-0 max-w-full">
+          <label htmlFor="result-filter" className="mb-1 block text-sm text-stone-500">Результат</label>
           <select
+            id="result-filter"
             value={resultFilter}
             onChange={(event) => setResultFilter(event.target.value)}
-            className="rounded border border-stone-400 bg-white px-3 py-2 text-stone-800 focus:border-chess-highlight focus:outline-none dark:border-stone-600 dark:bg-chess-dark dark:text-stone-200"
+            className="max-w-full rounded border border-stone-400 bg-white px-3 py-2 text-stone-800 focus:border-chess-highlight focus:outline-none dark:border-stone-600 dark:bg-chess-dark dark:text-stone-200"
           >
             <option value="">Все</option>
             <option value="1-0">1-0 (Победа белых)</option>
@@ -53,23 +54,29 @@ export function GameLibrary() {
             <option value="*">* (Без результата)</option>
           </select>
         </div>
-        <div>
-          <label className="mb-1 block text-sm text-stone-500">Дебют</label>
+        <div className="min-w-0 max-w-full">
+          <label htmlFor="opening-filter" className="mb-1 block text-sm text-stone-500">Дебют</label>
           <input
+            id="opening-filter"
             type="text"
             value={openingFilter}
             onChange={(event) => setOpeningFilter(event.target.value)}
             placeholder="Фильтр по дебюту..."
-            className="rounded border border-stone-400 bg-white px-3 py-2 text-stone-800 placeholder-stone-500 focus:border-chess-highlight focus:outline-none dark:border-stone-600 dark:bg-chess-dark dark:text-stone-200"
+            className="max-w-full rounded border border-stone-400 bg-white px-3 py-2 text-stone-800 placeholder-stone-500 focus:border-chess-highlight focus:outline-none dark:border-stone-600 dark:bg-chess-dark dark:text-stone-200"
           />
         </div>
       </div>
 
       {isLoading ? (
         <p className="py-8 text-center text-stone-500">Загрузка партий...</p>
+      ) : error ? (
+        <div role="alert" className="rounded-lg border border-red-400/50 p-4 text-sm text-red-400">
+          <p>Не удалось загрузить библиотеку: {error.message}</p>
+          <button type="button" onClick={() => void refetch()} className="mt-3 rounded bg-chess-highlight px-4 py-2 text-stone-100">Повторить загрузку</button>
+        </div>
       ) : games.length === 0 ? (
         <div className="rounded-lg border border-stone-300 bg-stone-200/50 py-12 text-center dark:border-stone-600 dark:bg-chess-light/20">
-          <p className="text-stone-600 dark:text-stone-500">Пока нет партий. Загрузите PGN, чтобы начать.</p>
+          <p className="text-stone-600 dark:text-stone-400">{resultFilter || openingFilter ? "По выбранным фильтрам партий нет." : "Пока нет партий. Загрузите PGN, чтобы начать."}</p>
           <button
             onClick={() => setShowUpload(true)}
             className="mt-4 text-chess-highlight hover:underline"
@@ -78,7 +85,7 @@ export function GameLibrary() {
           </button>
         </div>
       ) : (
-        <div className="overflow-hidden rounded-lg border border-stone-300 dark:border-stone-600">
+        <div className="overflow-x-auto rounded-lg border border-stone-300 dark:border-stone-600">
           <table className="w-full">
             <thead>
               <tr className="border-b border-stone-300 bg-stone-200/80 dark:border-stone-600 dark:bg-chess-light/50">

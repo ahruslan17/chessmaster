@@ -21,8 +21,11 @@ class TestClassifyMove:
         assert classify_move(0, -15, chess.WHITE) == "best"
 
     def test_excellent_move(self) -> None:
-        # Big swing from equal to winning for the mover -> rare "excellent".
-        assert classify_move(0, 350, chess.WHITE) == "excellent"
+        # Search improvement alone does not prove a brilliant move.
+        assert classify_move(0, 350, chess.WHITE) == "best"
+
+    def test_black_search_improvement_is_not_brilliance(self) -> None:
+        assert classify_move(0, -350, chess.BLACK) == "best"
 
     def test_not_excellent_when_already_winning(self) -> None:
         # Improving an already winning position should stay "best", not "excellent".
@@ -95,6 +98,20 @@ class TestPvToSan:
         ]
         result = pv_to_san(board, pv, max_moves=2)
         assert result == ["e4", "e5"]
+
+    def test_illegal_and_null_moves_stop_line(self) -> None:
+        board = chess.Board()
+        for bad_move in (chess.Move.from_uci("e2e5"), chess.Move.null()):
+            assert pv_to_san(board, [bad_move]) == []
+        assert board.fen() == chess.STARTING_FEN
+
+    def test_keeps_only_legal_prefix_without_mutating_history(self) -> None:
+        board = chess.Board()
+        board.push_san("e4")
+        history = list(board.move_stack)
+        line = [board.parse_san("e5"), chess.Move.from_uci("a1a8")]
+        assert pv_to_san(board, line) == ["e5"]
+        assert board.move_stack == history
 
 
 # ---------------------------------------------------------------------------

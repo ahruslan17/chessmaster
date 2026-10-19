@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import uuid
 from datetime import date
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Date, String, Text
+from sqlalchemy import Date, ForeignKey, String, Text
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
 
 if TYPE_CHECKING:
+    from app.models.access import AccessSession
     from app.models.game_analysis import GameAnalysis
     from app.models.game_note import GameNote
 
@@ -30,6 +33,12 @@ class Game(Base):
     time_control: Mapped[str | None] = mapped_column(String(50), nullable=True)
     played_at: Mapped[date | None] = mapped_column(Date, nullable=True)
     player_color: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    access_session_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("access_sessions.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
 
     # Relationships
     analysis: Mapped[GameAnalysis | None] = relationship(
@@ -37,4 +46,7 @@ class Game(Base):
     )
     note: Mapped[GameNote | None] = relationship(
         "GameNote", back_populates="game", uselist=False, cascade="all, delete-orphan"
+    )
+    access_session: Mapped[AccessSession | None] = relationship(
+        "AccessSession", back_populates="games"
     )

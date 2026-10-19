@@ -70,7 +70,9 @@ export function Diary() {
 
   const selectedGame = games.find((game) => game.id === selectedGameId) ?? null;
   const noteDirty = noteDraft.trim() !== noteOrigin.trim();
-  const gameFeedback = normalizeFeedback(analysis?.coach_feedback);
+  const verifiedReview = analysis?.score_version === 1 && analysis.review?.context?.version === 1
+    && analysis.review.player_color === selectedGame?.player_color ? analysis.review : null;
+  const gameFeedback = normalizeFeedback(verifiedReview ? { focus_points: verifiedReview.recommendations } : null);
 
   const handleSaveNote = async () => {
     if (!selectedGameId) {
@@ -215,33 +217,13 @@ export function Diary() {
                   </h3>
                   {analysisLoading ? (
                     <p className="mt-3 text-sm text-stone-500">Загрузка анализа...</p>
-                  ) : analysis?.summary ? (
+                  ) : verifiedReview?.summary ? (
                     <div className="mt-3 space-y-2 text-sm text-stone-700 dark:text-stone-300">
-                      <p className="whitespace-pre-wrap leading-relaxed">{analysis.summary}</p>
-                      {analysis.opening_assessment && (
-                        <p>
-                          <span className="font-medium text-stone-800 dark:text-stone-200">Дебют:</span>{" "}
-                          {analysis.opening_assessment}
-                        </p>
-                      )}
-                      {analysis.middlegame_assessment && (
-                        <p>
-                          <span className="font-medium text-stone-800 dark:text-stone-200">
-                            Миттельшпиль:
-                          </span>{" "}
-                          {analysis.middlegame_assessment}
-                        </p>
-                      )}
-                      {analysis.endgame_assessment && (
-                        <p>
-                          <span className="font-medium text-stone-800 dark:text-stone-200">Эндшпиль:</span>{" "}
-                          {analysis.endgame_assessment}
-                        </p>
-                      )}
+                      <p className="whitespace-pre-wrap leading-relaxed">{verifiedReview.summary}</p>
                     </div>
                   ) : (
                     <p className="mt-3 text-sm text-stone-500">
-                      Анализ по этой партии ещё не готов или не был запущен.
+                      Проверенного разбора вашей стороны пока нет. Старые тексты скрыты; откройте партию, выберите сторону и явно запустите объяснения.
                     </p>
                   )}
                 </div>
@@ -746,7 +728,7 @@ function parseDeltaMetrics(
 
   const metrics: Array<{ key: string; label: string; delta: number }> = [];
   for (const [key, value] of Object.entries(raw)) {
-    if (!isDeltaMetric(value)) {
+    if (/accuracy|точност/i.test(key) || !isDeltaMetric(value)) {
       continue;
     }
     const numericDelta =
@@ -773,15 +755,6 @@ function isDeltaMetric(value: unknown): value is DeltaMetric {
 }
 
 function metricLabel(key: string): string {
-  if (key === "overall_accuracy") {
-    return "Общая точность";
-  }
-  if (key === "white_accuracy") {
-    return "Точность белыми";
-  }
-  if (key === "black_accuracy") {
-    return "Точность чёрными";
-  }
   if (key === "games") {
     return "Количество партий";
   }

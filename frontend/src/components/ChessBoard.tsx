@@ -104,6 +104,7 @@ export function ChessBoard({
         customArrows={customArrows}
         customArrowColor={LAST_MOVE_ARROW_COLOR}
         areArrowsAllowed={false}
+        arePiecesDraggable={false}
         showBoardNotation={true}
         animationDuration={200}
       />

@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 from app.models.game import Game
 from app.models.game_analysis import GameAnalysis
 from app.models.period_report import PeriodReport
+from app.schemas.report import REPORT_CONTENT_VERSION
 from app.services.llm_coach import LLMCoachService, PeriodReportInput
 
 logger = logging.getLogger(__name__)
@@ -20,9 +21,6 @@ logger = logging.getLogger(__name__)
 @dataclass(slots=True, frozen=True)
 class PeriodAggregateStats:
     games_count: int
-    avg_accuracy_white: float | None
-    avg_accuracy_black: float | None
-    overall_avg_accuracy: float | None
     classification_counts: dict[str, int]
 
 
@@ -45,7 +43,8 @@ class ReportService:
     ) -> PeriodReport:
         """Generate a coaching report for the given period."""
         games_with_analyses = await self._fetch_games_with_analyses(period_start, period_end)
-        current_stats = self._aggregate_period_stats(games_with_analyses)
+        personal_games = [g for g in games_with_analyses if g.player_color in ("white", "black")]
+        current_stats = self._aggregate_period_stats(personal_games)
 
         previous_period_start, previous_period_end = _build_previous_period(
             period_start, period_end
@@ -60,6 +59,12 @@ class ReportService:
             current_stats,
             previous_stats,
         )
+        omitted_count = len(games_with_analyses) - len(personal_games)
+        if omitted_count:
+            fallback_comparison_summary += (
+                " Партий без выбранной стороны исключено из персонального отчёта: "
+                f"{omitted_count}."
+            )
 
         game_ids = [str(game.id) for game in games_with_analyses]
         report = PeriodReport(
@@ -73,7 +78,7 @@ class ReportService:
         self._session.add(report)
         await self._session.flush()
 
-        if not games_with_analyses:
+        if not personal_games:
             logger.info(
                 "No analyzed games in period %s-%s; report created without LLM",
                 period_start,
@@ -85,7 +90,7 @@ class ReportService:
             period_type=period_type,
             period_start=period_start,
             period_end=period_end,
-            games=games_with_analyses,
+            games=personal_games,
             current_stats=current_stats,
             previous_period_start=previous_period_start,
             previous_period_end=previous_period_end,
@@ -101,6 +106,11 @@ class ReportService:
             report.coach_feedback = result.coach_feedback or None
             if result.comparison_summary:
                 report.comparison_summary = result.comparison_summary
+                if omitted_count:
+                    report.comparison_summary += (
+                        " Партий без выбранной стороны исключено из персонального отчёта: "
+                        f"{omitted_count}."
+                    )
         except Exception as exc:
             logger.warning(
                 "LLM period report generation failed: %s; saving report without it",
@@ -132,48 +142,40 @@ class ReportService:
     def _build_game_summary(self, game: Game) -> str:
         """Build a text summary for a single game."""
         analysis = game.analysis
-        if not analysis:
+        if not analysis or game.player_color not in ("white", "black"):
             return ""
 
         parts = [f"{game.white_player} vs {game.black_player} - {game.result}"]
+        parts.append(f"Student side: {game.player_color}; counts include only this side's moves.")
         if game.opening_name:
             eco = game.eco_code or "?"
             parts.append(f"Opening: {game.opening_name} ({eco})")
 
-        for attr, prefix in [
-            (analysis.summary, ""),
-            (analysis.opening_assessment, "Opening: "),
-            (analysis.middlegame_assessment, "Middlegame: "),
-            (analysis.endgame_assessment, "Endgame: "),
-        ]:
-            if attr:
-                parts.append(f"{prefix}{attr}" if prefix else attr)
+        # Legacy free-form summaries may contain retired, untrustworthy percentages.
+        # Use stored engine classifications, not old generated prose, as report facts.
+        counts: defaultdict[str, int] = defaultdict(int)
+        for move in analysis.moves or []:
+            if move.color == game.player_color and move.classification:
+                counts[move.classification] += 1
+        parts.append(f"Move classifications: {dict(sorted(counts.items()))}")
         return "\n".join(parts)
 
     def _aggregate_period_stats(self, games: list[Game]) -> PeriodAggregateStats:
         """Build numeric aggregate stats used for deterministic comparison."""
         classification_counts: defaultdict[str, int] = defaultdict(int)
-        accuracies_white: list[float] = []
-        accuracies_black: list[float] = []
+        games_count = 0
 
         for game in games:
             analysis = game.analysis
-            if not analysis:
+            if not analysis or game.player_color not in ("white", "black"):
                 continue
-            if analysis.accuracy_white is not None:
-                accuracies_white.append(analysis.accuracy_white)
-            if analysis.accuracy_black is not None:
-                accuracies_black.append(analysis.accuracy_black)
+            games_count += 1
             for move in analysis.moves or []:
-                if move.classification:
+                if move.color == game.player_color and move.classification:
                     classification_counts[move.classification] += 1
 
-        overall_values = accuracies_white + accuracies_black
         return PeriodAggregateStats(
-            games_count=len(games),
-            avg_accuracy_white=_avg(accuracies_white),
-            avg_accuracy_black=_avg(accuracies_black),
-            overall_avg_accuracy=_avg(overall_values),
+            games_count=games_count,
             classification_counts=dict(classification_counts),
         )
 
@@ -189,12 +191,6 @@ class ReportService:
                 f"{key}: {value}"
                 for key, value in sorted(aggregate.classification_counts.items())
             )
-        if aggregate.avg_accuracy_white is not None:
-            stats["avg_accuracy_white"] = f"{aggregate.avg_accuracy_white:.1f}%"
-        if aggregate.avg_accuracy_black is not None:
-            stats["avg_accuracy_black"] = f"{aggregate.avg_accuracy_black:.1f}%"
-        if aggregate.overall_avg_accuracy is not None:
-            stats["overall_avg_accuracy"] = f"{aggregate.overall_avg_accuracy:.1f}%"
 
         return stats
 
@@ -205,28 +201,10 @@ class ReportService:
     ) -> dict[str, object]:
         """Build deterministic comparison metrics between two periods."""
         metrics: dict[str, object] = {
+            "content_version": REPORT_CONTENT_VERSION,
             "games": _delta_metric(current.games_count, previous.games_count),
             "previous_period_has_data": previous.games_count > 0,
         }
-
-        if current.overall_avg_accuracy is not None and previous.overall_avg_accuracy is not None:
-            metrics["overall_accuracy"] = _delta_metric(
-                round(current.overall_avg_accuracy, 2),
-                round(previous.overall_avg_accuracy, 2),
-                precision=2,
-            )
-        if current.avg_accuracy_white is not None and previous.avg_accuracy_white is not None:
-            metrics["white_accuracy"] = _delta_metric(
-                round(current.avg_accuracy_white, 2),
-                round(previous.avg_accuracy_white, 2),
-                precision=2,
-            )
-        if current.avg_accuracy_black is not None and previous.avg_accuracy_black is not None:
-            metrics["black_accuracy"] = _delta_metric(
-                round(current.avg_accuracy_black, 2),
-                round(previous.avg_accuracy_black, 2),
-                precision=2,
-            )
 
         tracked = ("blunder", "mistake", "inaccuracy", "best", "excellent", "good", "theory")
         for key in tracked:
@@ -250,17 +228,6 @@ class ReportService:
             )
 
         parts: list[str] = []
-        if current.overall_avg_accuracy is not None and previous.overall_avg_accuracy is not None:
-            delta_accuracy = current.overall_avg_accuracy - previous.overall_avg_accuracy
-            if delta_accuracy >= 0:
-                parts.append(
-                    f"Средняя точность выросла на {delta_accuracy:.1f} п.п."
-                )
-            else:
-                parts.append(
-                    f"Средняя точность снизилась на {abs(delta_accuracy):.1f} п.п."
-                )
-
         current_errors = sum(
             current.classification_counts.get(name, 0)
             for name in ("inaccuracy", "mistake", "blunder")
@@ -271,14 +238,19 @@ class ReportService:
         )
         if current_errors < previous_errors:
             parts.append(
-                f"Количество грубых ошибок сократилось ({previous_errors} -> {current_errors})."
+                "Количество отмеченных ошибок сократилось "
+                f"({previous_errors} -> {current_errors})."
             )
         elif current_errors > previous_errors:
             parts.append(
-                f"Количество грубых ошибок выросло ({previous_errors} -> {current_errors})."
+                f"Количество отмеченных ошибок выросло ({previous_errors} -> {current_errors})."
             )
         else:
-            parts.append(f"Количество грубых ошибок без изменений ({current_errors}).")
+            parts.append(f"Количество отмеченных ошибок без изменений ({current_errors}).")
+
+        parts.append(
+            "Размеры выборок могут различаться; эти количества не доказывают рост навыка."
+        )
 
         return " ".join(parts)
 
@@ -295,14 +267,16 @@ class ReportService:
         comparison_metrics: dict[str, object],
     ) -> PeriodReportInput:
         """Build the input context for LLM period report generation."""
-        game_summaries = [self._build_game_summary(game) for game in games if game.analysis]
+        game_summaries = [
+            summary for game in games if (summary := self._build_game_summary(game))
+        ]
         aggregate_stats = self._build_prompt_aggregate_stats(current_stats)
 
         return PeriodReportInput(
             period_type=period_type,
             period_start=str(period_start),
             period_end=str(period_end),
-            games_count=len(games),
+            games_count=current_stats.games_count,
             game_summaries=game_summaries,
             aggregate_stats=aggregate_stats,
             previous_period_start=str(previous_period_start),
@@ -310,12 +284,6 @@ class ReportService:
             previous_games_count=previous_stats.games_count,
             comparison_metrics=comparison_metrics,
         )
-
-
-def _avg(values: list[float]) -> float | None:
-    if not values:
-        return None
-    return sum(values) / len(values)
 
 
 def _build_previous_period(period_start: date, period_end: date) -> tuple[date, date]:

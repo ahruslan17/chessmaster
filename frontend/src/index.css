@@ -8,6 +8,11 @@
     font-size: 125%;
     @apply bg-stone-100 text-stone-800 antialiased dark:bg-chess-dark dark:text-stone-200;
   }
+
+  :focus-visible {
+    outline: 2px solid #4a7c59;
+    outline-offset: 3px;
+  }
 }
 
 /* Board border: light vs dark theme */

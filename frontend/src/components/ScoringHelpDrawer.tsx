@@ -67,15 +67,13 @@ export function ScoringHelpDrawer({ isOpen, onClose }: ScoringHelpDrawerProps) {
                 4. Потеря шанса: <code>loss = max(0, P_before - P_after)</code>.
               </p>
               <p>5. По порогам loss определяется класс хода.</p>
+              <p>Переход к вынужденному мату соперника отмечается как зевок, потеря своего вынужденного мата — как ошибка, даже если шкала шансов почти не изменилась.</p>
             </section>
 
             <section className="space-y-2">
               <p className="font-medium text-stone-700 dark:text-stone-200">Пороги</p>
               <p>
-                <code>excellent</code>: loss &lt;= 0.005 (редкий, почти компьютерный ход)
-              </p>
-              <p>
-                <code>best</code>: 0.005 &lt; loss &lt;= 0.02
+                <code>best</code>: loss &lt;= 0.02
               </p>
               <p>
                 <code>good</code>: 0.02 &lt; loss &lt;= 0.05
@@ -92,10 +90,11 @@ export function ScoringHelpDrawer({ isOpen, onClose }: ScoringHelpDrawerProps) {
             </section>
 
             <section className="rounded border border-stone-300 bg-stone-200/60 p-3 dark:border-stone-600 dark:bg-chess-light/30">
-              <p className="font-medium text-stone-700 dark:text-stone-200">Особый случай</p>
+              <p className="font-medium text-stone-700 dark:text-stone-200">Ограничения</p>
               <p className="mt-2">
-                <code>theory</code> ставится отдельно по дебютной базе (opening book) и не
-                зависит от порогов выше.
+                Скачок оценки между поисками не доказывает гениальность хода, поэтому
+                метка <code>excellent</code> автоматически не назначается. Совпадение с
+                дебютной базой не заменяет оценку качества хода.
               </p>
             </section>
           </div>

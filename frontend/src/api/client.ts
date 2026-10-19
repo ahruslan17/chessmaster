@@ -1,4 +1,24 @@
+import { createSseParser } from "./sse";
+import type { AccessConfigRead, AccessStatusRead, PlayerColor } from "./types";
+
 const API_BASE = "/api";
+
+export class ApiError extends Error {
+  constructor(message: string, public status: number, public detail: unknown) {
+    super(message);
+  }
+}
+
+async function responseError(res: Response, fallback: string): Promise<ApiError> {
+  const body = await res.json().catch(() => ({ detail: res.statusText }));
+  const detail = body.detail;
+  const message = typeof detail === "string" ? detail
+    : detail && typeof detail.message === "string" ? detail.message
+    : res.status === 409 ? "Задача уже выполняется или импорт конфликтует с существующей партией."
+    : res.status === 503 ? "Сервис объяснений или очередь недоступны. Результаты сохранены; повторите позже."
+    : fallback;
+  return new ApiError(message, res.status, detail);
+}
 
 async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   const url = path.startsWith("/") ? path : `${API_BASE}/${path}`;
@@ -11,10 +31,24 @@ async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   });
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error((err as { detail?: string }).detail ?? "Ошибка запроса");
+    throw await responseError(res, "Ошибка запроса");
   }
   return res.json();
+}
+
+export async function getAccessConfig(): Promise<AccessConfigRead> {
+  return fetchApi("access/config");
+}
+
+export async function getAccessStatus(): Promise<AccessStatusRead> {
+  return fetchApi("access/status");
+}
+
+export async function activateAccess(code: string): Promise<AccessStatusRead> {
+  return fetchApi("access/activate", {
+    method: "POST",
+    body: JSON.stringify({ code }),
+  });
 }
 
 function toQuery(params: Record<string, string | number | undefined>): string {
@@ -66,25 +100,42 @@ export async function listGameNotes(params?: {
 }
 
 export async function getAnalysis(
-  gameId: string
+  gameId: string,
+  playerColor?: PlayerColor
 ): Promise<import("./types").GameAnalysisRead> {
-  return fetchApi(`games/${gameId}/analysis`);
+  return fetchApi(`games/${gameId}/analysis${toQuery({ player_color: playerColor })}`);
 }
 
 export async function getAnalysisStatus(
-  gameId: string
+  gameId: string,
+  playerColor?: PlayerColor
 ): Promise<import("./types").AnalysisStatusRead> {
-  return fetchApi(`games/${gameId}/analysis/status`);
+  return fetchApi(`games/${gameId}/analysis/status${toQuery({ player_color: playerColor })}`);
+}
+
+export function startAnalysis(gameId: string, recover = false, expectedAttemptId?: string | null): Promise<import("./types").AnalysisStatusRead> {
+  return fetchApi(`games/${gameId}/analysis/start`, {
+    method: "POST",
+    body: JSON.stringify({ recover, ...(recover ? { expected_attempt_id: expectedAttemptId ?? null } : {}) }),
+  });
+}
+
+export function startExplanations(gameId: string, playerColor: PlayerColor, recover = false, expectedAttemptId?: string | null): Promise<import("./types").AnalysisStatusRead> {
+  return fetchApi(`games/${gameId}/analysis/explanations`, {
+    method: "POST",
+    body: JSON.stringify({ player_color: playerColor, recover, ...(recover ? { expected_attempt_id: expectedAttemptId ?? null } : {}) }),
+  });
 }
 
 export async function streamMoveCommentary(
   gameId: string,
   moveIndex: number,
   onChunk?: (chunk: string) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  playerColor?: PlayerColor
 ): Promise<string> {
   const res = await fetch(
-    `${API_BASE}/games/${gameId}/analysis/moves/${moveIndex}/commentary/stream`,
+    `${API_BASE}/games/${gameId}/analysis/moves/${moveIndex}/commentary/stream${toQuery({ player_color: playerColor })}`,
     {
       headers: { Accept: "text/event-stream" },
       signal,
@@ -92,10 +143,7 @@ export async function streamMoveCommentary(
   );
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(
-      (err as { detail?: string }).detail ?? "Не удалось получить поток комментария"
-    );
+    throw await responseError(res, "Не удалось получить поток комментария");
   }
 
   if (!res.body) {
@@ -104,19 +152,11 @@ export async function streamMoveCommentary(
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
-  let buffer = "";
   let fullText = "";
-  let eventData: string[] = [];
-
-  const flushEvent = () => {
-    if (eventData.length === 0) {
-      return;
-    }
-    const chunk = eventData.join("\n");
+  const parser = createSseParser((chunk) => {
     fullText += chunk;
     onChunk?.(chunk);
-    eventData = [];
-  };
+  });
 
   while (true) {
     const { done, value } = await reader.read();
@@ -124,28 +164,12 @@ export async function streamMoveCommentary(
       break;
     }
 
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-
-    for (const rawLine of lines) {
-      const line = rawLine.trimEnd();
-      if (line.startsWith("data:")) {
-        eventData.push(line.startsWith("data: ") ? line.slice(6) : "");
-        continue;
-      }
-      if (line === "") {
-        flushEvent();
-      }
-    }
+    parser.push(decoder.decode(value, { stream: true }));
   }
 
-  const tail = buffer.trimEnd();
-  if (tail.startsWith("data:")) {
-    eventData.push(tail.startsWith("data: ") ? tail.slice(6) : "");
-  }
-  flushEvent();
-  return fullText.trim();
+  parser.push(decoder.decode());
+  parser.finish();
+  return fullText;
 }
 
 export async function uploadPgn(
@@ -158,13 +182,12 @@ export async function uploadPgn(
     form.append("player_color", playerColor);
   }
 
-  const res = await fetch(`${API_BASE}/games/upload`, {
+  const res = await fetch(`${API_BASE}/games/upload${toQuery({ player_color: playerColor })}`, {
     method: "POST",
     body: form,
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error((err as { detail?: string }).detail ?? "Не удалось загрузить файл");
+    throw await responseError(res, "Не удалось загрузить файл");
   }
   return res.json();
 }

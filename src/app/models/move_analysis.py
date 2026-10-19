@@ -33,6 +33,9 @@ class MoveAnalysis(Base):
     classification: Mapped[str | None] = mapped_column(String(20), nullable=True)
     top_moves: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     continuation_lines: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    score_before: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    score_after: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    played_line: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     llm_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Relationships

@@ -8,7 +8,6 @@ import chess.engine
 
 # --- Classification thresholds (expected points loss / win chance loss) ---
 # Player-facing thresholds inspired by common platform UX:
-#   excellent: special case ("brilliant") - rare, strong turning move
 #   best      <= 0.02
 #   good      <= 0.05
 #   inaccuracy<= 0.10
@@ -19,15 +18,7 @@ GOOD_LOSS_THRESHOLD = 0.05
 INACCURACY_LOSS_THRESHOLD = 0.10
 MISTAKE_LOSS_THRESHOLD = 0.20
 
-# "Excellent" (brilliant-like) should be rare:
-# - move must sharply improve the mover's eval,
-# - position after the move should be clearly winning,
-# - and the mover should not already be clearly winning before the move.
-EXCELLENT_MIN_IMPROVEMENT_CP = 200.0
-EXCELLENT_AFTER_WINNING_CP = 300.0
-EXCELLENT_BEFORE_CAP_CP = 150.0
-
-# Conventional centipawn value used to represent mate scores.
+# Legacy classification surrogate only; not a mate distance or a public score.
 MATE_SCORE_CP = 10_000
 
 
@@ -42,8 +33,7 @@ def classify_move(
     perspective. ``color`` is the side that made the move.
     """
     loss = win_chance_loss(eval_before_white_cp, eval_after_white_cp, color)
-    if _is_excellent_move(eval_before_white_cp, eval_after_white_cp, color, loss):
-        return "excellent"
+    # Search instability can improve the evaluation. It is not evidence of brilliance.
     if loss <= BEST_LOSS_THRESHOLD:
         return "best"
     if loss <= GOOD_LOSS_THRESHOLD:
@@ -53,33 +43,6 @@ def classify_move(
     if loss <= MISTAKE_LOSS_THRESHOLD:
         return "mistake"
     return "blunder"
-
-
-def _is_excellent_move(
-    eval_before_white_cp: float,
-    eval_after_white_cp: float,
-    color: chess.Color,
-    loss: float,
-) -> bool:
-    """Whether a move qualifies as a rare "excellent" (brilliant-like) move."""
-    # Brilliant moves should not reduce the mover's winning chances.
-    if loss > 0:
-        return False
-
-    # Convert eval to the mover's perspective:
-    # positive means good for the side that moved.
-    before_for_mover = eval_before_white_cp if color == chess.WHITE else -eval_before_white_cp
-    after_for_mover = eval_after_white_cp if color == chess.WHITE else -eval_after_white_cp
-    improvement = after_for_mover - before_for_mover
-
-    if improvement < EXCELLENT_MIN_IMPROVEMENT_CP:
-        return False
-    if after_for_mover < EXCELLENT_AFTER_WINNING_CP:
-        return False
-    if before_for_mover > EXCELLENT_BEFORE_CAP_CP:
-        return False
-
-    return True
 
 
 def win_chance_loss(
@@ -124,6 +87,8 @@ def pv_to_san(
     san_list: list[str] = []
     temp_board = board.copy()
     for move in pv_moves[:max_moves]:
+        if not temp_board.is_legal(move):
+            break
         try:
             san_list.append(temp_board.san(move))
             temp_board.push(move)

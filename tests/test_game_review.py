@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.models.game import Game
-from app.services.opening_matcher import OpeningMatch
 from app.services.game_review import (
     GameReviewService,
     _build_game_record,
@@ -14,6 +13,7 @@ from app.services.game_review import (
     _build_move_analysis,
     _build_move_commentary_inputs,
 )
+from app.services.opening_matcher import OpeningMatch
 from app.services.pgn_parser import ParsedGame
 from app.services.stockfish_analyzer import MoveEvaluation
 from tests.conftest import SAMPLE_PGN_SINGLE
@@ -165,10 +165,12 @@ class TestGameReviewService:
     @pytest.mark.asyncio()
     async def test_create_games_from_pgn(self, sample_parsed_game: ParsedGame) -> None:
         mock_session = AsyncMock()
+        mock_session.add = MagicMock()
         mock_session.flush = AsyncMock()
         # _find_game_by_fingerprint uses execute; return no existing game
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = None
+        mock_result.scalars.return_value = []
         mock_session.execute = AsyncMock(return_value=mock_result)
 
         service = GameReviewService(mock_session)
@@ -183,9 +185,11 @@ class TestGameReviewService:
     @pytest.mark.asyncio()
     async def test_create_games_uses_opening_matcher(self) -> None:
         mock_session = AsyncMock()
+        mock_session.add = MagicMock()
         mock_session.flush = AsyncMock()
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = None
+        mock_result.scalars.return_value = []
         mock_session.execute = AsyncMock(return_value=mock_result)
 
         mock_opening_matcher = MagicMock()
@@ -221,6 +225,7 @@ class TestGameReviewService:
         mock_session = AsyncMock()
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = existing
+        mock_result.scalars.return_value = [existing]
         mock_session.execute = AsyncMock(return_value=mock_result)
         mock_session.flush = AsyncMock()
 
@@ -242,8 +247,105 @@ class TestGameReviewService:
 
     @pytest.mark.asyncio()
     async def test_create_games_empty_pgn(self) -> None:
+        from app.core.exceptions import PGNParseError
+
         mock_session = AsyncMock()
         service = GameReviewService(mock_session)
-        games, new_ids = await service.create_games_from_pgn("")
-        assert games == []
-        assert new_ids == []
+        with pytest.raises(PGNParseError):
+            await service.create_games_from_pgn("")
+
+    @pytest.mark.asyncio()
+    async def test_same_moves_different_players_create_separate_games(self) -> None:
+        existing = Game(id=uuid.uuid4(), pgn_text=SAMPLE_PGN_SINGLE)
+        session = AsyncMock()
+        session.add = MagicMock()
+        rows = MagicMock()
+        rows.scalars.return_value = [existing]
+        session.execute.return_value = rows
+        games, new_ids = await GameReviewService(session).create_games_from_pgn(
+            SAMPLE_PGN_SINGLE.replace('"Player1"', '"Other player"')
+        )
+        assert games[0] is not existing
+        assert len(new_ids) == 1
+
+    @pytest.mark.asyncio()
+    async def test_opposite_side_reimport_is_explicit_conflict(self) -> None:
+        from fastapi import HTTPException
+
+        existing = Game(id=uuid.uuid4(), pgn_text=SAMPLE_PGN_SINGLE, player_color="white")
+        session = AsyncMock()
+        session.add = MagicMock()
+        rows = MagicMock()
+        rows.scalars.return_value = [existing]
+        session.execute.return_value = rows
+        with pytest.raises(HTTPException) as exc:
+            await GameReviewService(session).create_games_from_pgn(SAMPLE_PGN_SINGLE, "black")
+        assert exc.value.status_code == 409
+        assert existing.player_color == "white"
+        calls = session.execute.call_args_list
+        assert "pg_advisory_xact_lock" in str(calls[0].args[0])
+        assert calls[1].args[0].get_execution_options()["populate_existing"] is True
+
+    @pytest.mark.asyncio()
+    async def test_technical_header_and_comments_do_not_split_identity(self) -> None:
+        existing = Game(id=uuid.uuid4(), pgn_text=SAMPLE_PGN_SINGLE, player_color=None)
+        session = AsyncMock()
+        session.add = MagicMock()
+        rows = MagicMock()
+        rows.scalars.return_value = [existing]
+        session.execute.return_value = rows
+        annotated = SAMPLE_PGN_SINGLE.replace(
+            '[Event "Test Game"]',
+            '[Annotator "Engine"]\n[PlayerColor "black"]\n[Event "Test Game"]'
+        ).replace("e4 e5", "e4 {comment} e5")
+        games, new_ids = await GameReviewService(session).create_games_from_pgn(annotated, "black")
+        assert games == [existing] and new_ids == []
+        assert existing.player_color == "black"
+
+    @pytest.mark.asyncio()
+    async def test_import_batch_locks_sorted_before_lookup_and_deduplicates_locally(self) -> None:
+        from hashlib import sha256
+
+        from app.services.pgn_parser import PGNParserService
+        from app.utils.chess_helpers import moves_fingerprint
+        from tests.conftest import SAMPLE_PGN_MULTI
+
+        session = AsyncMock()
+        session.add = MagicMock()
+        rows = MagicMock()
+        rows.scalars.return_value = []
+        session.execute.return_value = rows
+        pgn = SAMPLE_PGN_MULTI + "\n" + SAMPLE_PGN_MULTI
+        parsed = PGNParserService().parse_pgn(pgn)
+        keys = sorted({
+            int.from_bytes(sha256(moves_fingerprint(g.moves).encode()).digest()[:8],
+                           "big", signed=True)
+            for g in parsed
+        })
+        games, new_ids = await GameReviewService(session).create_games_from_pgn(pgn)
+        calls = session.execute.call_args_list
+        assert len(calls) == 4  # Two locks, two lookups; no duplicate lookup in this batch.
+        for call, key in zip(calls[:2], keys, strict=True):
+            stmt = call.args[0]
+            assert "pg_advisory_xact_lock" in str(stmt)
+            assert key in stmt.compile().params.values()
+        assert all("FROM games" in str(call.args[0]) for call in calls[2:])
+        assert len(games) == 4 and len(new_ids) == 2
+        assert games[0] is games[2] and games[1] is games[3]
+        assert session.add.call_count == 2
+
+    @pytest.mark.asyncio()
+    async def test_legacy_invalid_pgn_does_not_block_valid_import(self, caplog) -> None:
+        invalid = Game(id=uuid.uuid4(), pgn_text="private invalid PGN")
+        existing = Game(id=uuid.uuid4(), pgn_text=SAMPLE_PGN_SINGLE, player_color="white")
+        session = AsyncMock()
+        session.add = MagicMock()
+        rows = MagicMock()
+        rows.scalars.return_value = [invalid, existing]
+        session.execute.return_value = rows
+        games, new_ids = await GameReviewService(session).create_games_from_pgn(
+            SAMPLE_PGN_SINGLE, "white"
+        )
+        assert games == [existing] and new_ids == []
+        assert "Skipping invalid stored PGN" in caplog.text
+        assert "private invalid PGN" not in caplog.text

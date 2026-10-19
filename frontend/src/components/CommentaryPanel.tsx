@@ -1,59 +1,17 @@
-import { useEffect, useState } from "react";
-import * as api from "../api/client";
 import type { MoveAnalysisRead } from "../api/types";
 import { CLASSIFICATION_META } from "../classification";
 
 interface CommentaryPanelProps {
-  gameId?: string;
-  moveIndex: number | null;
-  allowStreaming?: boolean;
   move: MoveAnalysisRead | null;
   summary?: string | null;
 }
 
 export function CommentaryPanel({
-  gameId,
-  moveIndex,
-  allowStreaming = false,
   move,
   summary,
 }: CommentaryPanelProps) {
-  const [streamedComment, setStreamedComment] = useState<string | null>(null);
-  const [isStreaming, setIsStreaming] = useState(false);
-
-  useEffect(() => {
-    setStreamedComment(null);
-    setIsStreaming(false);
-
-    if (!allowStreaming || !move || move.llm_comment || !gameId || moveIndex == null) return;
-
-    let cancelled = false;
-    const controller = new AbortController();
-    setIsStreaming(true);
-
-    void api
-      .streamMoveCommentary(gameId, moveIndex, (chunk) => {
-        if (cancelled) return;
-        setStreamedComment((prev) => `${prev ?? ""}${chunk}`);
-      }, controller.signal)
-      .then((fullComment) => {
-        if (cancelled || !fullComment) return;
-        setStreamedComment((prev) => prev ?? fullComment);
-      })
-      .catch(() => {
-        if (!cancelled) setStreamedComment(null);
-      })
-      .finally(() => {
-        if (!cancelled) setIsStreaming(false);
-      });
-
-    return () => {
-      cancelled = true;
-      controller.abort();
-    };
-  }, [allowStreaming, gameId, moveIndex, move?.id, move?.llm_comment]);
-
-  const comment = move?.llm_comment ?? streamedComment ?? null;
+  // Read-only projection. Selecting a move never requests or generates commentary.
+  const comment = move?.llm_comment ?? null;
   const classificationMeta = move?.classification
     ? CLASSIFICATION_META[move.classification as keyof typeof CLASSIFICATION_META]
     : null;
@@ -61,7 +19,7 @@ export function CommentaryPanel({
   return (
     <div className="rounded-lg border border-stone-300 bg-stone-200/50 p-4 dark:border-stone-600 dark:bg-chess-light/30">
       <h3 className="mb-3 text-sm font-semibold text-stone-600 dark:text-stone-400">Комментарии</h3>
-      <div className="space-y-3 text-sm text-stone-700 dark:text-stone-300">
+      <div className="space-y-3 break-words text-sm text-stone-700 dark:text-stone-300">
         {move ? (
           <>
             <div className="flex flex-wrap gap-2">
@@ -82,9 +40,7 @@ export function CommentaryPanel({
               )}
             </div>
             {comment ? (
-              <p className="leading-relaxed">{comment}</p>
-            ) : isStreaming ? (
-              <p className="italic text-stone-500">Генерируется комментарий...</p>
+              <p className="whitespace-pre-wrap leading-relaxed">{comment}</p>
             ) : (
               <p className="italic text-stone-500">Для этого хода комментарий отсутствует.</p>
             )}

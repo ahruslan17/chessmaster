@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chess Master — разбор своих партий понятным языком</title>
+<style>
+  :root {
+    --paper: #faf7f1;
+    --paper-soft: #f1ece1;
+    --ink: #26241e;
+    --ink-soft: #5c584c;
+    --line: #d8d2c3;
+    --green: #4a7c59;
+    --green-deep: #3a6248;
+    --red: #b4552d;
+    --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { height: 100%; }
+  body {
+    height: 100%;
+    font-family: var(--sans);
+    background: var(--paper);
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.55;
+  }
+
+  .deck { height: 100dvh; }
+  .slide {
+    display: none;
+    height: 100dvh;
+    overflow-y: auto;
+    padding: clamp(24px, 6vh, 72px) clamp(20px, 7vw, 96px);
+  }
+  .slide.active { display: flex; flex-direction: column; justify-content: center; }
+  .inner { width: 100%; max-width: 1080px; margin: 0 auto; }
+
+  .label {
+    font-family: var(--mono);
+    font-size: clamp(0.7rem, 1.4vw, 0.82rem);
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--green);
+    margin-bottom: clamp(14px, 3vh, 28px);
+  }
+  .label .sep { color: var(--line); margin: 0 0.5em; }
+  .label .muted { color: var(--ink-soft); }
+
+  h1 {
+    font-size: clamp(2rem, 5.2vw, 3.9rem);
+    line-height: 1.12;
+    letter-spacing: -0.02em;
+    font-weight: 700;
+    max-width: 20ch;
+  }
+  h2 {
+    font-size: clamp(1.55rem, 3.6vw, 2.6rem);
+    line-height: 1.18;
+    letter-spacing: -0.015em;
+    font-weight: 700;
+    max-width: 26ch;
+    margin-bottom: clamp(20px, 4.5vh, 44px);
+  }
+  .lead {
+    font-size: clamp(1rem, 1.9vw, 1.3rem);
+    color: var(--ink-soft);
+    max-width: 52ch;
+  }
+
+  .num-big {
+    font-family: var(--mono);
+    font-weight: 600;
+    color: var(--green);
+  }
+
+  /* ---------- списки-тезисы ---------- */
+  .theses { list-style: none; display: flex; flex-direction: column; }
+  .theses li {
+    display: grid;
+    grid-template-columns: clamp(44px, 6vw, 72px) 1fr;
+    gap: clamp(12px, 2.5vw, 28px);
+    align-items: baseline;
+    padding: clamp(12px, 2.4vh, 22px) 0;
+    border-top: 1px solid var(--line);
+    font-size: clamp(0.98rem, 1.75vw, 1.22rem);
+  }
+  .theses li:last-child { border-bottom: 1px solid var(--line); }
+  .theses .n { font-family: var(--mono); font-size: clamp(1.05rem, 2vw, 1.5rem); font-weight: 600; color: var(--green); }
+  .theses strong { color: var(--ink); }
+  .theses .sub { color: var(--ink-soft); }
+
+  /* ---------- две колонки ---------- */
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: clamp(20px, 4vw, 56px); align-items: start; }
+  .panel h3 {
+    font-family: var(--mono);
+    font-size: clamp(0.78rem, 1.4vw, 0.92rem);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: clamp(10px, 2vh, 18px);
+    padding-bottom: 8px;
+    border-bottom: 2px solid currentColor;
+  }
+  .panel.pain h3 { color: var(--red); }
+  .panel.need h3 { color: var(--green); }
+  .panel ul { list-style: none; }
+  .panel ul li {
+    padding: clamp(8px, 1.6vh, 13px) 0 clamp(8px, 1.6vh, 13px) 26px;
+    position: relative;
+    font-size: clamp(0.95rem, 1.65vw, 1.15rem);
+    color: var(--ink-soft);
+    border-bottom: 1px dashed var(--line);
+  }
+  .panel ul li:last-child { border-bottom: none; }
+  .panel ul li::before {
+    content: "—";
+    position: absolute;
+    left: 0;
+    color: var(--ink-soft);
+  }
+  .panel.pain ul li::before { content: "×"; color: var(--red); font-weight: 700; }
+  .panel.need ul li::before { content: "✓"; color: var(--green); font-weight: 700; }
+  .panel ul li strong { color: var(--ink); }
+
+  .footline {
+    margin-top: clamp(22px, 5vh, 48px);
+    font-size: clamp(1.05rem, 2vw, 1.4rem);
+    font-weight: 600;
+    max-width: 46ch;
+    border-left: 4px solid var(--green);
+    padding-left: clamp(14px, 2vw, 24px);
+  }
+
+  /* ---------- пример ---------- */
+  .example { display: grid; grid-template-columns: minmax(0, auto) 1fr; gap: clamp(24px, 4.5vw, 64px); align-items: start; }
+  .board-wrap { max-width: 100%; }
+  .board-wrap svg { display: block; width: min(100%, 380px); height: auto; border: 2px solid var(--ink); border-radius: 4px; }
+  .caption {
+    font-family: var(--mono);
+    font-size: clamp(0.72rem, 1.3vw, 0.85rem);
+    color: var(--ink-soft);
+    margin-top: 12px;
+    max-width: 42ch;
+  }
+  .explain-card { border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+  .explain-card .row { padding: clamp(12px, 2.2vh, 20px) clamp(14px, 2.4vw, 26px); border-bottom: 1px solid var(--line); }
+  .explain-card .row:last-child { border-bottom: none; }
+  .explain-card .k {
+    font-family: var(--mono);
+    font-size: 0.74rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--green);
+    margin-bottom: 4px;
+  }
+  .explain-card .row.pitfall .k { color: var(--red); }
+  .explain-card p { font-size: clamp(0.9rem, 1.55vw, 1.05rem); color: var(--ink-soft); }
+  .explain-card p strong { color: var(--ink); }
+  .explain-card .san { font-family: var(--mono); font-weight: 600; color: var(--ink); }
+  .note-demo {
+    font-family: var(--mono);
+    font-size: 0.74rem;
+    letter-spacing: 0.08em;
+    color: var(--ink-soft);
+    border: 1px dashed var(--line);
+    border-radius: 4px;
+    padding: 6px 12px;
+    display: inline-block;
+    margin-bottom: clamp(14px, 3vh, 26px);
+  }
+
+  /* ---------- шаги ---------- */
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: clamp(16px, 3vw, 40px); }
+  .step { border-top: 3px solid var(--green); padding-top: clamp(12px, 2.4vh, 22px); }
+  .step .n { font-family: var(--mono); font-size: clamp(1.6rem, 3.4vw, 2.6rem); font-weight: 600; color: var(--green); line-height: 1; }
+  .step h3 { font-size: clamp(1.05rem, 1.9vw, 1.35rem); margin: clamp(8px, 1.6vh, 14px) 0 clamp(6px, 1.2vh, 10px); }
+  .step p { font-size: clamp(0.9rem, 1.55vw, 1.05rem); color: var(--ink-soft); }
+
+  /* ---------- роли ---------- */
+  .roles { display: grid; grid-template-columns: repeat(3, 1fr); gap: clamp(16px, 3vw, 40px); margin-bottom: clamp(22px, 4.5vh, 44px); }
+  .role { background: var(--paper-soft); border-radius: 6px; padding: clamp(16px, 3vh, 28px); }
+  .role .glyph { font-size: clamp(1.6rem, 3vw, 2.2rem); line-height: 1; margin-bottom: 10px; }
+  .role h3 { font-size: clamp(1rem, 1.8vw, 1.25rem); margin-bottom: 8px; }
+  .role p { font-size: clamp(0.88rem, 1.5vw, 1rem); color: var(--ink-soft); }
+
+  /* ---------- статус ---------- */
+  .ok-list li::before { content: "✓"; color: var(--green); font-weight: 700; }
+  .limit-list li::before { content: "!"; color: var(--red); font-weight: 700; }
+
+  /* ---------- обложка и финал ---------- */
+  .cover .foot {
+    margin-top: clamp(28px, 7vh, 72px);
+    font-family: var(--mono);
+    font-size: clamp(0.75rem, 1.35vw, 0.9rem);
+    color: var(--ink-soft);
+    border-top: 1px solid var(--line);
+    padding-top: 16px;
+    display: flex;
+    gap: 2em;
+    flex-wrap: wrap;
+  }
+  .slide-dark { background: var(--ink); color: var(--paper); }
+  .slide-dark h2 { color: var(--paper); max-width: 22ch; }
+  .slide-dark .label { color: #8fb89b; }
+  .slide-dark .lead { color: #cfc9ba; }
+  .cta-token {
+    display: inline-block;
+    margin-top: clamp(24px, 5vh, 48px);
+    font-family: var(--mono);
+    font-size: clamp(0.95rem, 1.8vw, 1.15rem);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--paper);
+    border: 2px solid var(--green);
+    border-radius: 6px;
+    padding: clamp(12px, 2.4vh, 20px) clamp(20px, 3.5vw, 40px);
+  }
+  .cta-note { margin-top: 14px; font-size: clamp(0.8rem, 1.4vw, 0.92rem); color: #8f897a; }
+
+  /* ---------- навигация ---------- */
+  .hud {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px clamp(16px, 4vw, 40px);
+    pointer-events: none;
+  }
+  .hud > * { pointer-events: auto; }
+  .counter { font-family: var(--mono); font-size: 0.85rem; color: var(--ink-soft); }
+  .navbtns { display: flex; gap: 8px; }
+  .navbtns button {
+    font-family: var(--mono);
+    font-size: 1rem;
+    min-width: 44px;
+    min-height: 44px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--paper);
+    color: var(--ink);
+    cursor: pointer;
+  }
+  .navbtns button:hover:not(:disabled) { background: var(--green); color: var(--paper); border-color: var(--green); }
+  .navbtns button:disabled { opacity: 0.35; cursor: default; }
+  .navbtns button:focus-visible { outline: 3px solid var(--green); outline-offset: 2px; }
+  .slide-dark.active ~ .hud .counter,
+  body:has(.slide-dark.active) .counter { color: #8f897a; }
+  body:has(.slide-dark.active) .navbtns button { background: transparent; color: var(--paper); border-color: #55503f; }
+
+  .slide:focus { outline: none; }
+
+  @media (max-width: 820px) {
+    .slide { justify-content: flex-start; padding-bottom: 90px; }
+    .split, .example, .steps, .roles { grid-template-columns: 1fr; }
+    .board-wrap svg { margin: 0 auto; }
+    .caption { margin-left: auto; margin-right: auto; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+
+  @media print {
+    .deck { height: auto; }
+    .slide {
+      display: flex !important;
+      flex-direction: column;
+      justify-content: flex-start;
+      height: auto;
+      min-height: 0;
+      overflow: visible;
+      page-break-after: always;
+      padding: 1.5cm 1.8cm;
+    }
+    .hud { display: none; }
+    .slide-dark { background: var(--paper); color: var(--ink); }
+    .slide-dark h2 { color: var(--ink); }
+    .slide-dark .lead { color: var(--ink-soft); }
+    .slide-dark .cta-token { color: var(--ink); }
+    .slide-dark .cta-note { color: var(--ink-soft); }
+    .board-wrap svg { width: 9cm; }
+  }
+</style>
+</head>
+<body>
+<main class="deck" aria-label="Презентация Chess Master">
+
+  <!-- 1. Обложка -->
+  <section class="slide cover active" tabindex="-1" aria-label="Слайд 1: обложка">
+    <div class="inner">
+      <p class="label">Chess Master <span class="sep">·</span> <span class="muted">Продуктовая презентация</span></p>
+      <h1>После партии понятно, что исправить в&nbsp;следующей.</h1>
+      <p class="lead" style="margin-top: clamp(18px, 3.5vh, 32px);">
+        Chess Master разбирает вашу сыгранную партию и объясняет ошибки простым
+        человеческим языком — для новичков, любителей и тех, кто их учит.
+      </p>
+      <div class="foot">
+        <span>Разбор своих партий</span>
+        <span>Понятные объяснения</span>
+        <span>Статус: MVP для экспертной проверки</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2. Проблема -->
+  <section class="slide" tabindex="-1" aria-label="Слайд 2: проблема">
+    <div class="inner">
+      <p class="label">Проблема</p>
+      <h2>Движок говорит «ошибка». Но&nbsp;не&nbsp;говорит, почему.</h2>
+      <div class="split">
+        <div class="panel pain">
+          <h3>Что игрок видит сейчас</h3>
+          <ul>
+            <li>Числа <strong>+1.4</strong> и пометку «грубая ошибка» — без единого слова о причине.</li>
+            <li>Длинную компьютерную линию из десяти ходов, которую новичок не в состоянии понять.</li>
+            <li>После партии — только счёт. <strong>Что исправлять — неизвестно.</strong></li>
+          </ul>
+        </div>
+        <div class="panel need">
+          <h3>Чего не хватает</h3>
+          <ul>
+            <li>Объяснения <strong>на понятном языке</strong>: почему ход слаб и что он упустил.</li>
+            <li>Конкретного сильного хода, который стоило сыграть вместо этого.</li>
+            <li>Урока, который пригодится <strong>в следующей партии</strong>, а не только в этой позиции.</li>
+          </ul>
+        </div>
+      </div>
+      <p class="footline">Занятие с тренером — раз в неделю. Партии — каждый день. Между ними игрок остаётся один на один со своими ошибками.</p>
+    </div>
+  </section>
+
+  <!-- 3. Что на выходе -->
+  <section class="slide" tabindex="-1" aria-label="Слайд 3: что получает игрок">
+    <div class="inner">
+      <p class="label">Что получает игрок</p>
+      <h2>Не отчёт на сорок ходов, а несколько моментов, которые действительно важны.</h2>
+      <ol class="theses">
+        <li><span class="n">01</span><span><strong>До пяти ключевых моментов именно вашей стороны.</strong> <span class="sub">Если важных ошибок меньше — показываем меньше, а не выдумываем лишние.</span></span></li>
+        <li><span class="n">02</span><span><strong>По каждому моменту:</strong> <span class="sub">что упущено, почему ход слаб и какая была сильная альтернатива.</span></span></li>
+        <li><span class="n">03</span><span><strong>Общий принцип и его границы.</strong> <span class="sub">Урок, который пригодится в других партиях, — с честным указанием, когда он не работает.</span></span></li>
+        <li><span class="n">04</span><span><strong>Короткие проверенные варианты на доске.</strong> <span class="sub">Легальные линии движка можно проиграть по ходам и увидеть разницу глазами.</span></span></li>
+        <li><span class="n">05</span><span><strong>Один–два практических совета.</strong> <span class="sub">Что тренировать после этой партии. Разбор сохраняется и открывается повторно в любой момент.</span></span></li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- 4. Конкретный пример -->
+  <section class="slide" tabindex="-1" aria-label="Слайд 4: пример формата разбора">
+    <div class="inner">
+      <p class="label">Как выглядит разбор</p>
+      <span class="note-demo">Пример формата разбора — демонстрация, а не скриншот продукта</span>
+      <div class="example">
+        <div class="board-wrap">
+          <svg id="demo-board" viewBox="0 0 360 388" role="img" aria-label="Шахматная позиция после ходов 1. f3 e5 2. g4, ход чёрных"></svg>
+          <p class="caption">Позиция после 1. f3 e5 2. g4. Белые только что сыграли g2–g4. Стрелка — ответ чёрных.</p>
+        </div>
+        <div class="explain-card">
+          <div class="row">
+            <p class="k">Что произошло</p>
+            <p>Ход <span class="san">g4</span> открыл диагональ <span class="san">h4–e1</span> к белому королю. Чёрный ферзь выходит на h4 — и мата уже не остановить: <span class="san">2…Фh4×</span>.</p>
+          </div>
+          <div class="row pitfall">
+            <p class="k">Почему ход слаб</p>
+            <p>Пешки <strong>f</strong> и <strong>g</strong> — естественный щит короля. Двинув обе в первые два хода, белые оставили короля без защиты ещё до развития фигур.</p>
+          </div>
+          <div class="row">
+            <p class="k">Как стоило играть</p>
+            <p><span class="san">2. Кf3</span> или <span class="san">2. e4</span> — развивать фигуры и держать пешечный щит на месте.</p>
+          </div>
+          <div class="row">
+            <p class="k">Принцип и его граница</p>
+            <p>В начале партии не трогайте пешки <strong>f</strong> и <strong>g</strong> без необходимости. Граница: когда король уже в безопасности, пешечный штурм может быть сильным планом.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5. Как это работает -->
+  <section class="slide" tabindex="-1" aria-label="Слайд 5: как это работает">
+    <div class="inner">
+      <p class="label">Как это работает</p>
+      <h2>Три шага от партии до понятного разбора.</h2>
+      <div class="steps">
+        <div class="step">
+          <p class="n">01</p>
+          <h3>Загрузите партию</h3>
+          <p>Файл PGN с любого шахматного сайта — и явный выбор своей стороны: белые или чёрные. Без выбора учебный разбор не начинается: программа не угадывает за вас.</p>
+        </div>
+        <div class="step">
+          <p class="n">02</p>
+          <h3>Получите разбор</h3>
+          <p>Движок Stockfish проверяет позиции, программа отбирает несколько важных моментов вашей стороны, а объяснения пишутся простым русским языком.</p>
+        </div>
+        <div class="step">
+          <p class="n">03</p>
+          <h3>Возвращайтесь в любой момент</h3>
+          <p>Разбор сохраняется. Повторное открытие показывает готовый результат без нового анализа — перед занятием, после него, через месяц.</p>
+        </div>
+      </div>
+      <p class="footline">Длинную партию не обрезаем: ждать допустимо столько, сколько потребуется.</p>
+    </div>
+  </section>
+
+  <!-- 6. Роли: игрок и тренер -->
+  <section class="slide" tabindex="-1" aria-label="Слайд 6: роль игрока и тренера">
+    <div class="inner">
+      <p class="label">Для тренера и шахматной школы</p>
+      <h2>Инструмент между занятиями, а не замена тренера.</h2>
+      <div class="roles">
+        <div class="role">
+          <p class="glyph">♞</p>
+          <h3>Движок считает</h3>
+          <p>Stockfish оценивает позиции и проверяет варианты. Каждая показанная линия легальна и проигрывается на доске.</p>
+        </div>
+        <div class="role">
+          <p class="glyph">♝</p>
+          <h3>Программа объясняет</h3>
+          <p>Причины ошибок переводятся на понятный язык новичка: что упущено, почему и какой принцип взять с собой.</p>
+        </div>
+        <div class="role">
+          <p class="glyph">♚</p>
+          <h3>Тренер оценивает</h3>
+          <p>Качество объяснений проверяет человек. Тренер видит готовый разбор ученика и строит занятие вокруг его ошибок.</p>
+        </div>
+      </div>
+      <p class="lead">Ученик приходит на урок с уже разобранной партией: время занятия уходит на обсуждение причин, а не на их поиск. Сейчас Chess Master — кандидат во вспомогательные инструменты школы, а не готовая интеграция с кабинетом и расписанием.</p>
+    </div>
+  </section>
+
+  <!-- 7. Статус и границы -->
+  <section class="slide" tabindex="-1" aria-label="Слайд 7: текущий статус и границы">
+    <div class="inner">
+      <p class="label">Где мы сейчас</p>
+      <h2>Рабочий MVP для экспертной проверки.</h2>
+      <div class="split">
+        <div class="panel need">
+          <h3>Уже работает</h3>
+          <ul class="ok-list">
+            <li>Импорт обычной партии в PGN без ограничения её длины.</li>
+            <li>Явный выбор своей стороны — белые или чёрные.</li>
+            <li>Проверенные движком короткие линии, которые легально проигрываются на доске.</li>
+            <li>Объяснения ошибок на русском языке и практические советы.</li>
+            <li>Сохранённый разбор открывается повторно без нового анализа.</li>
+          </ul>
+        </div>
+        <div class="panel pain">
+          <h3>Честные границы</h3>
+          <ul class="limit-list">
+            <li>Качество объяснений ещё <strong>не принято экспертом</strong> — именно это мы пришли проверять.</li>
+            <li>Мы не заявляем рост рейтинга: доказательств учебного эффекта пока нет.</li>
+            <li>Нет процента «точности» в пользовательских выводах.</li>
+            <li>Нет готовых интеграций, кабинетов школы и цен — это закрытый показ, а не публичный продукт.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 8. Приглашение -->
+  <section class="slide slide-dark" tabindex="-1" aria-label="Слайд 8: приглашение к проверке">
+    <div class="inner">
+      <p class="label">Chess Master <span class="sep">·</span> Следующий шаг</p>
+      <h2>Проверьте разбор на своей партии.</h2>
+      <p class="lead">
+        Дайте продукту свою настоящую партию — не отобранный нами пример.
+        Оцените причины, варианты и принципы так, как оценили бы разбор ученика.
+        Ваш вердикт определит следующий шаг: доработка, пилот в школе или честный отказ.
+      </p>
+      <p class="cta-token">Обсудить проверку и обратную связь</p>
+      <p class="cta-note">Это приглашение к разговору — загрузка партии происходит в самом продукте на закрытом стенде.</p>
+    </div>
+  </section>
+
+</main>
+
+<div class="hud">
+  <span class="counter" id="counter" aria-live="polite">1 / 8</span>
+  <div class="navbtns">
+    <button type="button" id="prev" aria-label="Предыдущий слайд">←</button>
+    <button type="button" id="next" aria-label="Следующий слайд">→</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ---------- Демонстрационная доска: позиция после 1. f3 e5 2. g4 ---------- */
+  var FEN = "rnbqkbnr/pppp1ppp/8/4p3/6P1/5P2/PPPPP2P/RNBQKBNR b KQkq - 0 2";
+  var GLYPHS = { k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟" };
+  var SQ = 44, OFFSET = 4; /* доска 352x352 внутри viewBox 360x388 с координатами */
+  var LIGHT = "#f0e9dc", DARK = "#9db08a";
+
+  function squareXY(file, rankFromTop) {
+    return [OFFSET + file * SQ, OFFSET + rankFromTop * SQ];
+  }
+
+  function buildBoard() {
+    var svg = document.getElementById("demo-board");
+    if (!svg) return;
+    var ns = "http://www.w3.org/2000/svg";
+    function el(name, attrs) {
+      var node = document.createElementNS(ns, name);
+      for (var key in attrs) node.setAttribute(key, attrs[key]);
+      return node;
+    }
+
+    /* маркер стрелки */
+    var defs = el("defs", {});
+    var marker = el("marker", { id: "arrowhead", markerWidth: "8", markerHeight: "8", refX: "6", refY: "3", orient: "auto" });
+    marker.appendChild(el("path", { d: "M0,0 L6,3 L0,6 Z", fill: "#b4552d" }));
+    defs.appendChild(marker);
+    svg.appendChild(defs);
+
+    /* поля */
+    for (var rank = 0; rank < 8; rank++) {
+      for (var file = 0; file < 8; file++) {
+        var xy = squareXY(file, rank);
+        svg.appendChild(el("rect", {
+          x: xy[0], y: xy[1], width: SQ, height: SQ,
+          fill: (file + rank) % 2 === 0 ? LIGHT : DARK
+        }));
+      }
+    }
+
+    /* подсветка поля g4 (file 6, rank 4) — сыгранный ход */
+    var g4 = squareXY(6, 4);
+    svg.appendChild(el("rect", {
+      x: g4[0] + 2, y: g4[1] + 2, width: SQ - 4, height: SQ - 4,
+      fill: "none", stroke: "#b4552d", "stroke-width": 3, rx: 3
+    }));
+
+    /* фигуры из FEN */
+    var placement = FEN.split(" ")[0].split("/");
+    for (var r = 0; r < 8; r++) {
+      var f = 0;
+      for (var c = 0; c < placement[r].length; c++) {
+        var ch = placement[r].charAt(c);
+        if (/\d/.test(ch)) { f += parseInt(ch, 10); continue; }
+        var isWhite = ch === ch.toUpperCase();
+        var pos = squareXY(f, r);
+        svg.appendChild(el("text", {
+          x: pos[0] + SQ / 2, y: pos[1] + SQ / 2 + 1,
+          "text-anchor": "middle", "dominant-baseline": "central",
+          "font-size": 34,
+          "font-family": "'Segoe UI Symbol','Noto Sans Symbols 2','DejaVu Sans',sans-serif",
+          fill: isWhite ? "#fffdf6" : "#26241e",
+          stroke: isWhite ? "#26241e" : "none",
+          "stroke-width": isWhite ? 0.8 : 0
+        })).textContent = GLYPHS[ch.toLowerCase()];
+        f++;
+      }
+    }
+
+    /* стрелка Фd8–h4: центр d8 -> центр h4 */
+    var from = squareXY(3, 0), to = squareXY(7, 4);
+    svg.appendChild(el("line", {
+      x1: from[0] + SQ / 2, y1: from[1] + SQ / 2,
+      x2: to[0] + SQ / 2, y2: to[1] + SQ / 2,
+      stroke: "#b4552d", "stroke-width": 5, "stroke-linecap": "round",
+      "marker-end": "url(#arrowhead)", opacity: 0.92
+    }));
+
+    /* координаты: файлы снизу, ранги слева */
+    var files = "abcdefgh";
+    for (var i = 0; i < 8; i++) {
+      svg.appendChild(el("text", {
+        x: OFFSET + i * SQ + SQ / 2, y: OFFSET + 8 * SQ + 16,
+        "text-anchor": "middle", "font-size": 13,
+        "font-family": "'JetBrains Mono', ui-monospace, monospace",
+        fill: "#5c584c"
+      })).textContent = files.charAt(i);
+      svg.appendChild(el("text", {
+        x: 1, y: OFFSET + i * SQ + SQ / 2,
+        "text-anchor": "start", "dominant-baseline": "central", "font-size": 0,
+        fill: "none"
+      }));
+    }
+    /* ранги 8..1 слева — выносим в отдельный проход, чтобы не мешать пустым text */
+    for (var j = 0; j < 8; j++) {
+      var label = el("text", {
+        x: 2, y: OFFSET + j * SQ + SQ / 2,
+        "text-anchor": "start", "dominant-baseline": "central", "font-size": 0,
+        fill: "none"
+      });
+      /* скрытый узел-заглушка не нужен: ранги подписываем в левом поле через x=2 не помещаются,
+         поэтому пишем их поверх кромки доски */
+      svg.removeChild(svg.appendChild(label));
+    }
+  }
+  buildBoard();
+
+  /* ---------- Навигация ---------- */
+  var slides = Array.prototype.slice.call(document.querySelectorAll(".slide"));
+  var counter = document.getElementById("counter");
+  var prevBtn = document.getElementById("prev");
+  var nextBtn = document.getElementById("next");
+  var index = 0;
+
+  function show(n, focusSlide) {
+    index = Math.max(0, Math.min(slides.length - 1, n));
+    slides.forEach(function (slide, k) {
+      slide.classList.toggle("active", k === index);
+    });
+    counter.textContent = (index + 1) + " / " + slides.length;
+    prevBtn.disabled = index === 0;
+    nextBtn.disabled = index === slides.length - 1;
+    if (("#" + (index + 1)) !== window.location.hash) {
+      history.replaceState(null, "", "#" + (index + 1));
+    }
+    if (focusSlide) slides[index].focus({ preventScroll: true });
+    slides[index].scrollTop = 0;
+  }
+
+  function next() { show(index + 1, false); }
+  function prev() { show(index - 1, false); }
+
+  nextBtn.addEventListener("click", next);
+  prevBtn.addEventListener("click", prev);
+
+  document.addEventListener("keydown", function (event) {
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
+    switch (event.key) {
+      case "ArrowRight": case "ArrowDown": case "PageDown": case " ":
+        event.preventDefault(); next(); break;
+      case "ArrowLeft": case "ArrowUp": case "PageUp":
+        event.preventDefault(); prev(); break;
+      case "Home":
+        event.preventDefault(); show(0, false); break;
+      case "End":
+        event.preventDefault(); show(slides.length - 1, false); break;
+    }
+  });
+
+  window.addEventListener("hashchange", function () {
+    var n = parseInt(window.location.hash.replace("#", ""), 10);
+    if (!isNaN(n)) show(n - 1, false);
+  });
+
+  var initial = parseInt(window.location.hash.replace("#", ""), 10);
+  show(isNaN(initial) ? 0 : initial - 1, false);
+})();
+</script>
+</body>
+</html>
