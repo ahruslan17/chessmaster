@@ -62,7 +62,7 @@ docker compose $ENV $FILE ps
 После DNS добавить содержимое `deploy/caddy/chessmaster.caddy` в `/etc/caddy/Caddyfile`, проверить и применить конфигурацию:
 
 ```bash
-sudo caddy validate --config /etc/caddy/Caddyfile
+sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 sudo systemctl reload caddy
 curl --fail --max-time 20 https://chess.rakhmetzianov.website/api/health
 ```
