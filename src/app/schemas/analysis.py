@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from app.schemas.move_commentary import MoveCommentary
+
 
 class EngineScoreRead(BaseModel):
     """Stockfish evaluation from White's perspective, without mate sentinels."""
@@ -22,7 +24,7 @@ class SideReviewRead(BaseModel):
     status: str
     error: str | None = None
     context: dict[str, Any] = Field(default_factory=dict)
-    comments: dict[str, dict[str, str]] = Field(default_factory=dict)
+    comments: dict[str, MoveCommentary | dict[str, str]] = Field(default_factory=dict)
     summary: str | None = None
     recommendations: list[str] = Field(default_factory=list)
     attempt_id: uuid.UUID | None = None
@@ -49,9 +51,11 @@ class MoveAnalysisRead(BaseModel):
     top_moves: Any | None = None
     continuation_lines: Any | None = None
     llm_comment: str | None = None
+    commentary: MoveCommentary | None = None
     score_before: EngineScoreRead | None = None
     score_after: EngineScoreRead | None = None
     played_line: list[str] | None = None
+    best_line: list[str] | None = None
 
     model_config = {"from_attributes": True}
 
@@ -109,3 +113,4 @@ class EngineStartBody(BaseModel):
 
 class ExplanationStartBody(EngineStartBody):
     player_color: Literal["white", "black"]
+    detailed: bool = False

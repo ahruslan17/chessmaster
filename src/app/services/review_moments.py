@@ -7,12 +7,15 @@ from dataclasses import dataclass, replace
 
 import chess
 import chess.pgn
+from pydantic import ValidationError
 
+from app.schemas.move_commentary import MoveCommentary
 from app.services.opening_matcher import OpeningMatcher
 from app.services.stockfish_analyzer import MoveEvaluation, classify_evaluation
 
 MAX_MOMENTS = 5
 MAX_LINE_PLIES = 6
+COMMENTARY_VERSION = 2
 _ENDGAME_MAX_PIECES = 6
 _OPENING_MAX_MOVE = 10
 _NEARBY_PLIES = 4
@@ -22,6 +25,17 @@ _PIECE_NAMES = {
     chess.PAWN: "pawn", chess.KNIGHT: "knight", chess.BISHOP: "bishop",
     chess.ROOK: "rook", chess.QUEEN: "queen", chess.KING: "king",
 }
+
+
+def is_structured_commentary(value: object) -> bool:
+    """Recognize complete v2 content, not merely a stored version marker."""
+    if not isinstance(value, dict) or value.get("version") != COMMENTARY_VERSION:
+        return False
+    try:
+        MoveCommentary.model_validate(value)
+    except ValidationError:
+        return False
+    return True
 
 
 @dataclass(frozen=True)
@@ -258,7 +272,8 @@ def build_review_context(
     }
     if include_all_moves:
         context.update({
-            "commentary_scope": "all_moves", "moves": all_moments,
+            "commentary_scope": "all_moves", "commentary_version": COMMENTARY_VERSION,
+            "moves": all_moments,
             "moments_by_color": {
                 color: [moment.to_json() for moment in _select_moments(items)]
                 for color, items in candidates_by_color.items()

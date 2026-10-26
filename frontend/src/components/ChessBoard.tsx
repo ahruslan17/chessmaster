@@ -1,4 +1,6 @@
 import { Chessboard } from "react-chessboard";
+import { Chess } from "chess.js";
+import { useEffect, useId, useMemo, useState } from "react";
 import { useTheme } from "../contexts/ThemeContext";
 
 type Square = string;
@@ -50,6 +52,23 @@ export function ChessBoard({
   const frameSize = boardWidth + 8;
   const { theme } = useTheme();
   const colors = theme === "dark" ? SQUARE_COLORS_DARK : SQUARE_COLORS_LIGHT;
+  const descriptionId = useId();
+  const [reducedMotion, setReducedMotion] = useState(() => window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  useEffect(() => {
+    const preference = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const update = () => setReducedMotion(preference.matches);
+    preference.addEventListener("change", update);
+    return () => preference.removeEventListener("change", update);
+  }, []);
+  const positionDescription = useMemo(() => {
+    const chess = new Chess(position);
+    const names = { k: "король", q: "ферзь", r: "ладья", b: "слон", n: "конь", p: "пешка" };
+    const pieces = chess.board().flat().filter((piece) => piece !== null);
+    return [
+      `Шахматная доска. ${orientation === "white" ? "Белые" : "Чёрные"} снизу. Ход ${chess.turn() === "w" ? "белых" : "чёрных"}.`,
+      ...(["w", "b"] as const).map((color) => `${color === "w" ? "Белые" : "Чёрные"}: ${pieces.filter((piece) => piece.color === color).map((piece) => `${names[piece.type]} ${piece.square}`).join(", ")}.`),
+    ].join(" ");
+  }, [position, orientation]);
 
   const customSquareStyles: Record<string, React.CSSProperties> = {};
   if (lastMove) {
@@ -88,9 +107,14 @@ export function ChessBoard({
 
   return (
     <div
+      role="img"
+      aria-describedby={descriptionId}
+      aria-label="Позиция на шахматной доске"
       className="relative flex items-center justify-center overflow-hidden rounded-md border-2 border-stone-400 shadow-xl dark:border-stone-600"
       style={{ width: frameSize, height: frameSize }}
     >
+      <span id={descriptionId} className="sr-only">{positionDescription}</span>
+      <div aria-hidden="true">
       <Chessboard
         position={position}
         boardOrientation={orientation}
@@ -106,8 +130,9 @@ export function ChessBoard({
         areArrowsAllowed={false}
         arePiecesDraggable={false}
         showBoardNotation={true}
-        animationDuration={200}
+        animationDuration={reducedMotion ? 0 : 200}
       />
+      </div>
       {badgeStyle && (
         <img
           src={moveBadge?.iconSrc}

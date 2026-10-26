@@ -229,12 +229,17 @@ class GameReviewService:
         await self._session.flush()
         return analysis, True
 
-    async def queue_explanations(
+    async def queue_explanations(  # noqa: PLR0915 - keep attempt transitions under one lock.
         self, game_id: uuid.UUID, player_color: str, recover: bool = False,
         expected_attempt_id: uuid.UUID | None = None,
+        detailed: bool = False,
     ) -> tuple[SideReview, bool]:
-        """Queue shared full-game commentary; selected side only scopes highlights."""
-        from app.services.review_moments import build_review_context
+        """Queue shared commentary; only an explicit detailed request upgrades ready text."""
+        from app.services.review_moments import (
+            COMMENTARY_VERSION,
+            build_review_context,
+            is_structured_commentary,
+        )
 
         if player_color not in {"white", "black"}:
             raise HTTPException(status_code=422, detail="Выберите белую или чёрную сторону")
@@ -265,8 +270,17 @@ class GameReviewService:
         full_review = review is not None and (
             (review.context or {}).get("commentary_scope") == "all_moves"
         )
+        needs_upgrade = detailed and full_review and (
+            review.context.get("commentary_version") != COMMENTARY_VERSION
+            or any(
+                not is_structured_commentary(
+                    (review.comments or {}).get(str(move["move_index"]))
+                ) for move in review.context.get("moves", [])
+            )
+        )
         if same_result and not recover and (
-            review.status in {"queued", "in_progress"} or (full_review and review.status == "done")
+            review.status in {"queued", "in_progress"}
+            or (full_review and review.status == "done" and not needs_upgrade)
         ):
             return review, False
         result = await self._session.execute(
@@ -306,15 +320,14 @@ class GameReviewService:
             review.recommendations = None
             review.usage = None
         if review.context is None or not full_review:
-            if review.context is not None and not full_review:
-                review.stale_result = {
-                    "context": review.context, "comments": review.comments,
-                    "summary": review.summary, "recommendations": review.recommendations,
-                    "usage": review.usage,
-                }
-                review.summary = None
-                review.recommendations = None
             review.context = context
+        if detailed or not same_result:
+            review.context = {**review.context, "commentary_version": COMMENTARY_VERSION}
+        elif not full_review:
+            # Expanding a legacy side review fills gaps without opting into replacement.
+            review.context = {
+                key: value for key, value in review.context.items() if key != "commentary_version"
+            }
         review.attempt_id = uuid.uuid4()
         review.task_id = str(uuid.uuid4())
         review.heartbeat_at = None

@@ -29,7 +29,7 @@ export function EvalBar({
           style={whiteFillStyle}
         />
       </div>
-      <span className="text-xs text-stone-500 dark:text-stone-400">{display}</span>
+      <span className="font-mono text-xs text-stone-600 dark:text-stone-300">{display}</span>
     </div>
   );
 }

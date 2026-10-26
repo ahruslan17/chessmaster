@@ -120,10 +120,10 @@ export function startAnalysis(gameId: string, recover = false, expectedAttemptId
   });
 }
 
-export function startExplanations(gameId: string, playerColor: PlayerColor, recover = false, expectedAttemptId?: string | null): Promise<import("./types").AnalysisStatusRead> {
+export function startExplanations(gameId: string, playerColor: PlayerColor, recover = false, expectedAttemptId?: string | null, detailed = false): Promise<import("./types").AnalysisStatusRead> {
   return fetchApi(`games/${gameId}/analysis/explanations`, {
     method: "POST",
-    body: JSON.stringify({ player_color: playerColor, recover, ...(recover ? { expected_attempt_id: expectedAttemptId ?? null } : {}) }),
+    body: JSON.stringify({ player_color: playerColor, recover, ...(recover ? { expected_attempt_id: expectedAttemptId ?? null } : {}), ...(detailed ? { detailed: true } : {}) }),
   });
 }
 

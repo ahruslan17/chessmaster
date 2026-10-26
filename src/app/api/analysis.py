@@ -4,8 +4,10 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Literal
 
+import chess
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
+from pydantic import ValidationError
 from sqlalchemy import BigInteger, func, literal, select
 from sqlalchemy.orm import selectinload
 
@@ -24,6 +26,7 @@ from app.schemas.analysis import (
     MoveAnalysisRead,
     SideReviewRead,
 )
+from app.schemas.move_commentary import MoveCommentary
 from app.services.game_review import GameReviewService
 from app.services.opening_matcher import OpeningMatcher
 from app.services.pgn_parser import PGNParserService
@@ -31,6 +34,7 @@ from app.services.pgn_parser import PGNParserService
 router = APIRouter(prefix="/games/{game_id}/analysis", tags=["analysis"])
 PlayerColor = Literal["white", "black"]
 _PUBLIC_ENGINE_CAPACITY_LOCK = 7_034_992_011
+_STRUCTURED_COMMENTARY_VERSION = 2
 
 
 def _public_access_enabled() -> bool:
@@ -81,14 +85,84 @@ async def _get_review(
     return review if isinstance(review, SideReview) else None
 
 
-def _comment_text(comment: dict[str, str] | None) -> str | None:
+def _structured_commentary(comment: object) -> MoveCommentary | None:
+    if not isinstance(comment, dict) or comment.get("version") != _STRUCTURED_COMMENTARY_VERSION:
+        return None
+    try:
+        return MoveCommentary.model_validate(comment)
+    except ValidationError:
+        return None
+
+
+def _read_comment(comment: object) -> MoveCommentary | dict[str, str] | None:
+    """A damaged saved entry must not hide other comments or block explicit recovery."""
+    structured = _structured_commentary(comment)
+    if structured is not None:
+        return structured
+    if not isinstance(comment, dict):
+        return None
+    fields = {key: value for key in (
+        "text", "reason", "consequence", "alternative", "principle", "limitation",
+    ) if isinstance((value := comment.get(key)), str) and value.strip()}
+    return fields or None
+
+
+def _comment_text(comment: object) -> str | None:
     if not comment:
         return None
-    if comment.get("text"):
-        return comment["text"]
-    return "\n".join(comment.get(key, "") for key in (
+    structured = _structured_commentary(comment)
+    if structured is not None:
+        parts = ["Сыграно в партии", structured.played.idea]
+        fields = (
+            ("pros", "Плюсы"), ("cons", "Риски"), ("tactics", "Тактика"),
+            ("plan", "Дальнейший план"), ("opponent_reply", "Ответ соперника"),
+            ("missed_opportunity", "Упущенная возможность"),
+        )
+        parts.extend(f"{label}: {value}" for key, label in fields
+                     if (value := getattr(structured.played, key)))
+        if structured.alternative is not None:
+            parts.extend(["Рекомендация движка", structured.alternative.idea])
+            parts.extend(f"{label}: {value}" for key, label in fields
+                         if (value := getattr(structured.alternative, key)))
+        if structured.comparison:
+            parts.append(f"Сравнение: {structured.comparison}")
+        return "\n".join(parts)
+    legacy = _read_comment(comment)
+    if not isinstance(legacy, dict):
+        return None
+    if legacy.get("text"):
+        return legacy["text"]
+    return "\n".join(legacy[key] for key in (
         "reason", "consequence", "alternative", "principle", "limitation",
-    ) if comment.get(key)) or None
+    ) if key in legacy) or None
+
+
+def _verified_best_line(
+    moment: object, move: MoveAnalysisRead, fen_before: str,
+) -> list[str] | None:
+    """Expose only a legal branch attached to this exact played position and move."""
+    if not isinstance(moment, dict) or (
+        moment.get("fen_before") != fen_before
+        or moment.get("move_san") != move.move_san
+        or moment.get("best_move_san") != move.best_move_san
+    ):
+        return None
+    line = moment.get("best_line")
+    if not isinstance(line, list) or not line or not move.best_move_san:
+        return None
+    try:
+        board = chess.Board(fen_before)
+        best = board.parse_san(move.best_move_san)
+        for index, san in enumerate(line):
+            if not isinstance(san, str):
+                return None
+            candidate = board.parse_san(san)
+            if not board.is_legal(candidate) or (index == 0 and candidate != best):
+                return None
+            board.push(candidate)
+    except ValueError:
+        return None
+    return line
 
 
 @router.get("", response_model=GameAnalysisRead)
@@ -112,6 +186,16 @@ async def get_game_analysis(
         review = None
     comments = (review.comments or {}) if verified and review is not None else {}
     review_context = dict(review.context or {}) if review else {}
+    commentary_moments = {
+        moment["move_index"]: moment for moment in [
+            *review_context.get("moments", []), *review_context.get("moves", []),
+        ]
+        if isinstance(moment, dict) and isinstance(moment.get("move_index"), int)
+    }
+    public_comments = {
+        index: projected for index, saved in comments.items()
+        if (projected := _read_comment(saved)) is not None
+    }
     selected_color = player_color or game.player_color
     if review_context.get("commentary_scope") == "all_moves":
         review_context.pop("moves", None)  # Internal engine evidence is not a viewer payload.
@@ -121,12 +205,27 @@ async def get_game_analysis(
     parsed_games = PGNParserService().parse_pgn(game.pgn_text)
     opening = OpeningMatcher().match(parsed_games[0].moves) if parsed_games else None
     opening_move_count = opening.move_count if opening else 0
+    board = chess.Board()
     moves = []
     ordered_moves = sorted(analysis.moves, key=lambda m: (m.move_number, m.color != "white"))
     for index, record in enumerate(ordered_moves):
         move = MoveAnalysisRead.model_validate(record)
         move.is_theory = index < opening_move_count
-        move.llm_comment = _comment_text(comments.get(str(index)))
+        saved_comment = comments.get(str(index))
+        move.commentary = _structured_commentary(saved_comment)
+        if move.commentary is not None and (
+            not move.best_move_san or move.move_san == move.best_move_san
+        ):
+            move.commentary = move.commentary.model_copy(update={
+                "alternative": None, "comparison": None,
+            })
+        move.llm_comment = _comment_text(
+            move.commentary.model_dump(mode="json") if move.commentary else saved_comment
+        )
+        if verified:
+            move.best_line = _verified_best_line(commentary_moments.get(index), move, board.fen())
+        if parsed_games and index < len(parsed_games[0].moves):
+            board.push(parsed_games[0].moves[index])
         if not verified:
             move.score_before = None
             move.score_after = None
@@ -161,7 +260,7 @@ async def get_game_analysis(
         review=SideReviewRead(
             player_color=selected_color, owner_color=review.player_color,
             status=review.status, error=review.error,
-            context=review_context, comments=review.comments or {}, summary=review.summary,
+            context=review_context, comments=public_comments, summary=review.summary,
             recommendations=review.recommendations or [], attempt_id=review.attempt_id,
             task_id=review.task_id, usage=review.usage or {},
         ) if verified and review else None,
@@ -310,6 +409,7 @@ async def start_explanations(
     review, queued = await GameReviewService(session).queue_explanations(
         game_id, body.player_color, recover=body.recover,
         expected_attempt_id=body.expected_attempt_id,
+        **({"detailed": True} if body.detailed else {}),
     )
     await session.commit()
     if queued:

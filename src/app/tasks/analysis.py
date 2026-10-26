@@ -23,6 +23,7 @@ from app.services.llm_coach import (
     ReviewExplanationResult,
 )
 from app.services.pgn_parser import PGNParserService
+from app.services.review_moments import COMMENTARY_VERSION, is_structured_commentary
 from app.services.stockfish_analyzer import StockfishAnalyzerService
 
 logger = logging.getLogger(__name__)
@@ -204,6 +205,12 @@ async def _run_explanation_pipeline(
             missing = [
                 move for move in context["moves"]
                 if str(move["move_index"]) not in (comments or {})
+                or (
+                    context.get("commentary_version") == COMMENTARY_VERSION
+                    and not is_structured_commentary(
+                        (comments or {}).get(str(move["move_index"]))
+                    )
+                )
             ]
             coach = LLMCoachService()
             for start in range(0, len(missing), FULL_COMMENTARY_BATCH_SIZE):
@@ -285,13 +292,26 @@ async def _save_full_commentary(
         expected = {str(move["move_index"]) for move in review.context["moves"]}
         comments = dict(review.comments or {})
         if result is not None:
-            for index, text in result.comments.items():
+            for index, comment in result.comments.items():
                 if str(index) in expected:
-                    comments.setdefault(str(index), {"text": text})
+                    serialized = (
+                        {"text": comment} if isinstance(comment, str)
+                        else comment.model_dump(mode="json")
+                    )
+                    if str(index) not in comments or (
+                        review.context.get("commentary_version") == COMMENTARY_VERSION
+                        and is_structured_commentary(serialized)
+                        and not is_structured_commentary(comments[str(index)])
+                    ):
+                        comments[str(index)] = serialized
             review.usage = _merge_usage(review.usage, attempt_id, result.usage)
         review.comments = comments
         if finalize:
             complete = expected <= comments.keys()
+            if review.context.get("commentary_version") == COMMENTARY_VERSION:
+                complete = complete and all(
+                    is_structured_commentary(comments[index]) for index in expected
+                )
             review.status = "done" if complete else "partial"
             review.error = (
                 None if complete else "Комментарии получены не для всех ходов. Дополните разбор."

@@ -6,6 +6,8 @@ export default {
     extend: {
       fontFamily: {
         sans: ["JetBrains Mono", "monospace"],
+        coach: ["system-ui", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "sans-serif"],
+        mono: ["JetBrains Mono", "monospace"],
       },
       colors: {
         chess: {

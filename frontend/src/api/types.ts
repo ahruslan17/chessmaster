@@ -35,20 +35,39 @@ export interface ReviewMoment {
   verification: unknown;
 }
 
+export interface MoveExplanation {
+  idea: string;
+  pros?: string | null;
+  cons?: string | null;
+  tactics?: string | null;
+  plan?: string | null;
+  opponent_reply?: string | null;
+  missed_opportunity?: string | null;
+}
+
+export interface MoveCommentary {
+  version: 2;
+  played: MoveExplanation;
+  alternative: MoveExplanation | null;
+  comparison: string | null;
+}
+
+export interface LegacyMoveCommentary {
+  text?: string;
+  reason?: string;
+  consequence?: string;
+  alternative?: string;
+  principle?: string;
+  limitation?: string;
+}
+
 export interface SideReview {
   player_color: PlayerColor;
   owner_color?: PlayerColor;
   status: EngineStatus | "partial";
   error: string | null;
-  context: { version: 1; player_color: PlayerColor; moments: ReviewMoment[]; commentary_scope?: "all_moves"; moves?: ReviewMoment[] } | null;
-  comments: Record<string, {
-    text?: string;
-    reason?: string;
-    consequence?: string;
-    alternative?: string;
-    principle?: string;
-    limitation?: string;
-  }>;
+  context: { version: 1; player_color: PlayerColor; moments: ReviewMoment[]; commentary_scope?: "all_moves"; commentary_version?: 2; moves?: ReviewMoment[] } | null;
+  comments: Record<string, LegacyMoveCommentary | MoveCommentary>;
   summary: string | null;
   recommendations: string[];
   attempt_id: string | null;
@@ -84,12 +103,14 @@ export interface MoveAnalysisRead {
   score_before?: EngineScore | null;
   score_after?: EngineScore | null;
   played_line?: unknown;
+  best_line?: string[] | null;
   centipawn_loss: number | null;
   classification: string | null;
   is_theory?: boolean;
   top_moves: unknown;
   continuation_lines: unknown;
   llm_comment: string | null;
+  commentary?: MoveCommentary | null;
 }
 
 export interface GameAnalysisRead {

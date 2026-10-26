@@ -60,6 +60,10 @@ assert.equal(requests[2].options.method, "POST");
 await api.uploadPgn(new Blob(["1. e4 *"], { type: "text/plain" }), "black");
 assert.equal(requests[5].url, "/api/games/upload?player_color=black");
 assert.equal(requests[5].options.body.get("player_color"), "black");
+await api.startExplanations("game", "black", false, undefined, true);
+await api.startExplanations("game", "white", true, "upgrade-attempt", true);
+assert.deepEqual(JSON.parse(requests[6].options.body), { player_color: "black", recover: false, detailed: true });
+assert.deepEqual(JSON.parse(requests[7].options.body), { player_color: "white", recover: true, expected_attempt_id: "upgrade-attempt", detailed: true });
 
 const chunks = [];
 globalThis.fetch = async () => new Response(new ReadableStream({

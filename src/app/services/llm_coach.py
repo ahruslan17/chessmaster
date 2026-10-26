@@ -17,6 +17,7 @@ import litellm
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints, ValidationError
 
 from app.core.config import settings
+from app.schemas.move_commentary import CommentaryProse, MoveCommentary, MoveExplanation
 from app.services.stockfish_analyzer import EngineScore
 from app.utils.llm_prompts import (
     build_full_commentary_messages,
@@ -97,8 +98,23 @@ class _MoveCommentsResponse(BaseModel):
     comments: list[_MoveComment]
 
 
+class _FullCommentaryEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    move_index: int = Field(ge=0)
+    played: MoveExplanation
+    alternative: MoveExplanation | None = None
+    comparison: CommentaryProse | None = None
+
+
+class _FullCommentaryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    comments: list[_FullCommentaryEntry] = Field(max_length=FULL_COMMENTARY_BATCH_SIZE)
+
+
 class FullCommentaryResult(BaseModel):
-    comments: dict[int, str]
+    comments: dict[int, str | MoveCommentary]
     usage: dict[str, JsonValue] = Field(default_factory=dict)
 
 
@@ -332,35 +348,76 @@ class LLMCoachService:
         )
         return result
 
-    async def generate_full_commentary(self, context: dict) -> FullCommentaryResult:
+    async def generate_full_commentary(  # noqa: PLR0912
+        self, context: dict,
+    ) -> FullCommentaryResult:
         """Explain every requested ply, with the same board/line checks as selected reviews."""
-        moments = context["moves"]
-        if not moments or len(moments) > FULL_COMMENTARY_BATCH_SIZE:
+        moments = context.get("moves") if isinstance(context, dict) else None
+        if (
+            not isinstance(moments, list) or not moments
+            or len(moments) > FULL_COMMENTARY_BATCH_SIZE
+        ):
             raise LLMCoachError("Full commentary batch must contain 1–5 moves")
+        if any(
+            not isinstance(move, dict) or move.get("color") not in ("white", "black")
+            for move in moments
+        ):
+            raise LLMCoachError("Invalid full commentary move")
+        # A missing recommendation is not a recommendation to repeat the played move.
+        moments = [
+            dict(
+                move,
+                best_move_san="" if move.get("best_move_san") is None else move["best_move_san"],
+                best_line=move.get("best_line", []),
+            )
+            for move in moments
+        ]
         for color in ("white", "black"):
             own = [move for move in moments if move["color"] == color]
             for start in range(0, len(own), _MAX_REVIEW_COMMENTS):
                 _validate_review_context({
                     "version": 1, "player_color": color, "perspective": "white",
                     "moments": own[start:start + _MAX_REVIEW_COMMENTS],
-                })
+                }, allow_missing_best=True)
         evidence = _review_evidence_projection({
             "version": 1, "perspective": "white", "moments": moments,
         })
         for projected, original in zip(evidence["moments"], moments, strict=True):
             projected["is_theory"] = original.get("is_theory", False)
         raw, usage = await self._call_llm_with_usage(
-            build_full_commentary_messages(evidence), max_tokens=4096, timeout_seconds=180,
+            build_full_commentary_messages(evidence), max_tokens=8192, timeout_seconds=180,
+            temperature=None,
         )
         try:
-            response = _MoveCommentsResponse.model_validate(_parse_json_response(raw))
-            expected = {move["move_index"] for move in moments}
-            comments: dict[int, str] = {}
+            response = _FullCommentaryResponse.model_validate(_parse_json_response(raw))
+            expected = {move["move_index"]: move for move in moments}
+            comments: dict[int, MoveCommentary] = {}
             for entry in response.comments:
                 if entry.move_index not in expected or entry.move_index in comments:
                     raise LLMCoachError("Invalid or duplicate commentary move_index")
-                _reject_prose_moves(entry.comment, allow_square_references=True)
-                comments[entry.move_index] = entry.comment
+                moment = expected[entry.move_index]
+                before = chess.Board(moment["fen_before"])
+                has_alternative = bool(moment["best_move_san"]) and (
+                    before.parse_san(moment["best_move_san"])
+                    != before.parse_san(moment["move_san"])
+                )
+                if not has_alternative and (
+                    entry.alternative is not None or entry.comparison is not None
+                ):
+                    raise LLMCoachError("Commentary must not duplicate the played move")
+                if has_alternative and entry.alternative is None:
+                    # Context validation already established a nonempty legal best line.
+                    raise LLMCoachError("Verified alternative explanation is required")
+                for explanation in (entry.played, entry.alternative):
+                    if explanation is not None:
+                        for text in explanation.model_dump(exclude_none=True).values():
+                            _reject_prose_moves(text, allow_square_references=True)
+                if entry.comparison is not None:
+                    _reject_prose_moves(entry.comparison, allow_square_references=True)
+                comments[entry.move_index] = MoveCommentary(
+                    played=entry.played, alternative=entry.alternative,
+                    comparison=entry.comparison,
+                )
             return FullCommentaryResult(comments=comments, usage=usage)
         except (ValidationError, LLMCoachError) as exc:
             raise LLMCoachError("Invalid full commentary response", usage=usage) from exc
@@ -469,6 +526,7 @@ class LLMCoachService:
     async def _call_llm_with_usage(
         self, messages: list[dict[str, str]], *, max_tokens: int | None = None,
         timeout_seconds: int = _LLM_TIMEOUT_SECONDS,
+        temperature: float | None = 0.4,
     ) -> tuple[str, dict[str, JsonValue]]:
         usage: dict[str, JsonValue] = {}
         try:
@@ -479,7 +537,7 @@ class LLMCoachService:
                     api_key=self._api_key,
                     api_base=self._api_base,
                     response_format={"type": "json_object"},
-                    temperature=0.4,
+                    **({"temperature": temperature} if temperature is not None else {}),
                     timeout=timeout_seconds,
                     max_retries=0,
                     **({"max_tokens": max_tokens} if max_tokens is not None else {}),
@@ -556,7 +614,9 @@ def _response_usage(response: object) -> dict[str, JsonValue]:
 
 
 # Keep rejection checks together at this untrusted-input boundary for auditable ordering.
-def _validate_review_context(context: dict) -> set[int]:  # noqa: PLR0912, PLR0915
+def _validate_review_context(  # noqa: PLR0912, PLR0915
+    context: dict, *, allow_missing_best: bool = False,
+) -> set[int]:
     """Check context ownership and legal lines before any provider request."""
     if not isinstance(context, dict):
         raise LLMCoachError("Review context must be an object")
@@ -599,15 +659,21 @@ def _validate_review_context(context: dict) -> set[int]:  # noqa: PLR0912, PLR09
             if type(move_number) is not int or move_number != before.fullmove_number:
                 raise ValueError("Move number does not match FEN")
             played = before.parse_san(moment["move_san"])
-            best = before.parse_san(moment["best_move_san"])
-            if played not in before.legal_moves or best not in before.legal_moves:
+            best_san = moment["best_move_san"]
+            best = None if allow_missing_best and best_san == "" else before.parse_san(best_san)
+            if played not in before.legal_moves or (
+                best is not None and best not in before.legal_moves
+            ):
                 raise ValueError("Illegal or null move")
             expected_after = before.copy()
             expected_after.push(played)
             if expected_after.fen() != after.fen():
                 raise ValueError("Played move does not match fen_after")
             _validate_context_line(before, moment["played_line"], played)
-            _validate_context_line(before, moment["best_line"], best)
+            if best is not None:
+                _validate_context_line(before, moment["best_line"], best)
+            elif moment["best_line"] not in ([], None):
+                raise ValueError("Engine alternative line has no recommendation")
         except (KeyError, TypeError, ValueError, AttributeError, OverflowError) as exc:
             raise LLMCoachError("Invalid review position or engine line") from exc
         indices.add(index)
@@ -680,16 +746,28 @@ def _review_evidence_projection(context: dict) -> dict:
             },
             "alternative": {
                 "source": "hypothetical_engine", "move_index": moment["move_index"],
-                "fen_start": moment["fen_before"], "moves": moment["best_line"],
-                "events": _line_events(before, moment["best_line"]),
+                "fen_start": moment["fen_before"], "moves": moment["best_line"] or [],
+                "events": _line_events(before, moment["best_line"] or []),
             },
         }
+        if moment["best_line"]:
+            alternative_after = before.copy()
+            alternative_after.push_san(moment["best_line"][0])
+            safe["engine_lines"]["alternative"]["first_move"] = {
+                "source": "hypothetical_engine", "san": moment["best_move_san"],
+                "fen_after": alternative_after.fen(),
+                "material_before": _board_material(before),
+                "material_after": _board_material(alternative_after),
+                "events": _line_events(before, moment["best_line"][:1]),
+            }
         facts = [
             "Tactical motive and forced play are not established by legal lines.",
             "Numeric scores, loss and classification are engine evidence, not board-proven facts.",
         ]
         if len(moment["played_line"]) == 1 and not chess.Board(moment["fen_after"]).is_game_over():
             facts.append("No verified engine reply after the played move is available.")
+        if not moment["best_line"]:
+            facts.append("No verified engine alternative is available.")
         if safe["score_before"] is None or safe["score_after"] is None:
             facts.append(
                 "Exact cp/mate evidence is unavailable; do not infer mate from legacy values."

@@ -1,4 +1,5 @@
-﻿import type { MoveAnalysisRead } from "../api/types";
+﻿import { useEffect, useRef } from "react";
+import type { MoveAnalysisRead } from "../api/types";
 import { CLASSIFICATION_META } from "../classification";
 
 interface MoveListProps {
@@ -12,6 +13,16 @@ export function MoveList({
   currentMoveIndex,
   onSelectMove,
 }: MoveListProps) {
+  const listRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const list = listRef.current;
+    const selected = list?.querySelector<HTMLButtonElement>('[aria-current="step"]');
+    if (!list || !selected) return;
+    const bounds = list.getBoundingClientRect();
+    const chip = selected.getBoundingClientRect();
+    if (chip.top < bounds.top) list.scrollTop -= bounds.top - chip.top + 8;
+    else if (chip.bottom > bounds.bottom) list.scrollTop += chip.bottom - bounds.bottom + 8;
+  }, [currentMoveIndex, moves]);
   const byNumber = new Map<number, MoveAnalysisRead[]>();
   for (const move of moves) {
     const list = byNumber.get(move.move_number) ?? [];
@@ -33,18 +44,17 @@ export function MoveList({
   return (
     <div className="overflow-hidden rounded-lg border border-stone-300 bg-stone-200/50 dark:border-stone-600 dark:bg-chess-light/30">
       <div className="flex items-center justify-between border-b border-stone-300 px-3 py-2 dark:border-stone-600">
-        <h3 className="text-sm font-semibold text-stone-600 dark:text-stone-300">Ходы</h3>
-        <span className="text-xs text-stone-500 dark:text-stone-400">{moves.length} полуходов</span>
+        <h2 className="text-sm font-semibold text-stone-800 dark:text-stone-100">Ходы партии</h2>
       </div>
 
-      <div className="max-h-72 overflow-y-auto px-2.5 py-2.5">
-        <div className="grid gap-1.5 [grid-template-columns:repeat(auto-fit,minmax(9rem,1fr))]">
+      <div ref={listRef} className="max-h-60 overflow-y-auto px-2.5 py-2.5">
+        <div className="grid gap-1.5 [grid-template-columns:repeat(auto-fit,minmax(min(100%,13rem),1fr))]">
           {grouped.map(({ moveNumber, white, black }) => (
             <div
               key={moveNumber}
-              className="mb-1.5 inline-flex w-full break-inside-avoid items-center gap-1 rounded-md border border-stone-300/70 bg-stone-100/60 px-1.5 py-0.5 dark:border-stone-600/50 dark:bg-chess-dark/20"
+              className="inline-flex w-full break-inside-avoid flex-wrap items-center gap-1 px-1 py-0.5"
             >
-              <span className="min-w-5 text-right text-xs font-medium text-stone-500 dark:text-stone-400">
+              <span className="min-w-5 text-right font-mono text-xs font-medium text-stone-600 dark:text-stone-300">
                 {moveNumber}.
               </span>
 
@@ -83,22 +93,26 @@ function MoveChip({
   const meta = move.classification
     ? CLASSIFICATION_META[move.classification as keyof typeof CLASSIFICATION_META]
     : null;
-  const colorClass = meta?.colorClass ?? "bg-stone-300/60 text-stone-700 border-stone-400/60";
-  const cp = move.centipawn_loss != null ? `${Math.round(move.centipawn_loss)} cp` : null;
+  const quality = move.classification === "best" && move.best_move_san && move.best_move_san !== move.move_san
+    ? "Один из лучших" : meta?.label;
+  const label = [`Ход ${move.move_number}`, move.color === "white" ? "белые" : "чёрные", move.move_san, quality, move.is_theory ? "Из дебютной базы" : null].filter(Boolean).join(" · ");
+  const icon = move.is_theory ? CLASSIFICATION_META.theory : meta;
 
   return (
     <button
       type="button"
       onClick={onClick}
-      title={[move.move_san, move.is_theory ? "Теория: ход из дебютной базы" : null, cp].filter(Boolean).join(" · ")}
-      className={`rounded-md border px-2 py-0.5 text-sm font-semibold tracking-tight transition ${
+      title={label}
+      aria-label={label}
+      aria-current={isActive ? "step" : undefined}
+      className={`inline-flex min-h-10 shrink-0 items-center gap-1 whitespace-nowrap rounded-md border px-2 py-1 font-mono text-sm font-medium transition ${
         isActive
-          ? "ring-2 ring-chess-highlight ring-offset-1 ring-offset-stone-100 dark:ring-offset-chess-dark"
-          : "hover:brightness-110"
-      } ${colorClass}`}
+          ? "border-chess-highlight bg-chess-highlight text-white"
+          : "border-transparent text-stone-800 hover:bg-stone-300 dark:text-stone-100 dark:hover:bg-stone-700"
+      }`}
     >
       {move.move_san}
-      {move.is_theory && <img src={CLASSIFICATION_META.theory.iconSrc} alt="Теория" className="ml-1 inline-block h-3.5 w-3.5" />}
+      {icon && <img src={icon.iconSrc} alt="" aria-hidden="true" className="h-3.5 w-3.5" />}
     </button>
   );
 }

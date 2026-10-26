@@ -6,8 +6,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import chess
 import pytest
+from pydantic import ValidationError
 
+from app.schemas.move_commentary import MoveCommentary, MoveExplanation
 from app.services.llm_coach import (
+    FullCommentaryResult,
     GameSummaryInput,
     GameSummaryResult,
     LLMCoachError,
@@ -495,14 +498,20 @@ def _review_response(index: int = 0) -> dict:
     }
 
 
+def _full_comment(index: int = 0) -> dict:
+    return {
+        "move_index": index,
+        "played": {"idea": "  Пешка занимает центр и открывает диагональ слону.  "},
+        "alternative": {"idea": "Другая центральная пешка контролировала бы соседние поля."},
+    }
+
+
 @pytest.mark.parametrize("indices", [[0, 1], [0], []])
 async def test_full_commentary_handles_both_sides_and_reports_partial_response(indices):
     context = {"moves": [*_review_context("white")["moments"],
                          *_review_context("black")["moments"]]}
     context["moves"][0]["is_theory"] = True
-    response = {"comments": [
-        {"move_index": i, "comment": "Ход укрепляет центр."} for i in indices
-    ]}
+    response = {"comments": [_full_comment(i) for i in indices]}
     coach = LLMCoachService(model="test-model", api_key="test-key", api_base="")
     with patch(
         "app.services.llm_coach.litellm.acompletion", new_callable=AsyncMock,
@@ -511,9 +520,17 @@ async def test_full_commentary_handles_both_sides_and_reports_partial_response(i
         result = await coach.generate_full_commentary(context)
     assert set(result.comments) == set(indices)
     assert result.usage["total_tokens"] == 70
-    assert call.call_args.kwargs["max_tokens"] == 4096
+    assert call.call_args.kwargs["max_tokens"] == 8192
     assert call.call_args.kwargs["timeout"] == 180
     assert call.call_args.kwargs["extra_headers"] == {"Connection": "close"}
+    assert call.call_args.kwargs["max_retries"] == 0
+    assert "temperature" not in call.call_args.kwargs
+    for comment in result.comments.values():
+        assert isinstance(comment, MoveCommentary)
+        assert comment.version == 2
+        assert comment.played.idea == "Пешка занимает центр и открывает диагональ слону."
+        assert comment.played.cons is None
+        assert comment.alternative is not None
     sent = json.loads(call.call_args.kwargs["messages"][1]["content"])
     assert sent["moments"][0]["is_theory"] is True
     assert [m["color"] for m in sent["moments"]] == ["white", "black"]
@@ -521,10 +538,11 @@ async def test_full_commentary_handles_both_sides_and_reports_partial_response(i
 
 
 @pytest.mark.parametrize("entries", [
-    [{"move_index": 1, "comment": "Ход укрепляет центр."}],
-    [{"move_index": 0, "comment": "Ход укрепляет центр."}] * 2,
-    [{"move_index": 0, "comment": "Здесь следует Nf3."}],
-    [{"move_index": 0, "comment": " "}],
+    [_full_comment(1)],
+    [_full_comment()] * 2,
+    [{**_full_comment(), "played": {"idea": "Здесь следует Nf3."}}],
+    [{**_full_comment(), "played": {"idea": " "}}],
+    [{"move_index": 0, "comment": "Legacy prose is not a live full commentary response."}],
 ])
 async def test_full_commentary_rejects_foreign_duplicate_or_invalid_text(entries):
     coach = LLMCoachService(model="test-model", api_key="test-key", api_base="")
@@ -542,11 +560,249 @@ async def test_full_commentary_allows_square_names_without_invented_move_notatio
     with patch(
         "app.services.llm_coach.litellm.acompletion", new_callable=AsyncMock,
         return_value=_mock_llm_response(json.dumps({
-            "comments": [{"move_index": 0, "comment": text}],
+            "comments": [{**_full_comment(), "played": {"idea": text}}],
         })),
     ):
         result = await coach.generate_full_commentary({"moves": _review_context()["moments"]})
-    assert result.comments == {0: text}
+    assert result.comments[0].played.idea == text
+
+
+def test_full_commentary_result_accepts_legacy_and_structured_comments():
+    result = FullCommentaryResult(comments={
+        0: "Already persisted legacy prose.",
+        1: MoveCommentary(played=MoveExplanation(idea="A position-specific idea.")),
+    })
+    assert isinstance(result.comments[0], str)
+    assert result.comments[1].version == 2
+
+
+@pytest.mark.parametrize("best", ["e4", "e2e4", "", None])
+async def test_full_commentary_same_or_missing_recommendation_has_only_played_branch(best):
+    moment = _review_context()["moments"][0]
+    moment["best_move_san"] = best
+    moment["best_line"] = ["e4", "e5"] if best else []
+    entry = {"move_index": 0, "played": {"idea": "Пешка занимает центр."}}
+    coach = LLMCoachService(model="test-model")
+    with patch(
+        "app.services.llm_coach.litellm.acompletion", new_callable=AsyncMock,
+        return_value=_mock_llm_response(json.dumps({"comments": [entry]})),
+    ):
+        result = await coach.generate_full_commentary({"moves": [moment]})
+    assert result.comments[0].alternative is None
+    assert result.comments[0].comparison is None
+
+
+@pytest.mark.parametrize("best", ["e4", "", None])
+@pytest.mark.parametrize("field,value", [
+    ("alternative", {"idea": "This duplicates or invents a recommendation."}),
+    ("comparison", "This comparison lacks a distinct recommendation."),
+])
+async def test_full_commentary_rejects_second_branch_without_distinct_best(best, field, value):
+    moment = _review_context()["moments"][0]
+    moment.update(best_move_san=best, best_line=["e4"] if best else [])
+    entry = {"move_index": 0, "played": {"idea": "Central control."}, field: value}
+    with patch(
+        "app.services.llm_coach.litellm.acompletion", new_callable=AsyncMock,
+        return_value=_mock_llm_response(json.dumps({"comments": [entry]})),
+    ), pytest.raises(LLMCoachError):
+        await LLMCoachService(model="test-model").generate_full_commentary({"moves": [moment]})
+
+
+@pytest.mark.parametrize("alternative", [None, "absent"])
+async def test_full_commentary_requires_explanation_of_verified_distinct_best(alternative):
+    entry = _full_comment()
+    if alternative == "absent":
+        del entry["alternative"]
+    else:
+        entry["alternative"] = alternative
+    with patch(
+        "app.services.llm_coach.litellm.acompletion", new_callable=AsyncMock,
+        return_value=_mock_llm_response(json.dumps({"comments": [entry]})),
+    ), pytest.raises(LLMCoachError):
+        await LLMCoachService(model="test-model").generate_full_commentary({
+            "moves": _review_context()["moments"],
+        })
+
+
+async def test_full_commentary_accepts_all_optional_sections_as_prose():
+    entry = _full_comment()
+    sections = ("pros", "cons", "tactics", "plan", "opponent_reply", "missed_opportunity")
+    for branch in ("played", "alternative"):
+        entry[branch].update(dict.fromkeys(sections, "  Supported position-specific prose.  "))
+    entry["comparison"] = "  Supported comparison.  "
+    with patch(
+        "app.services.llm_coach.litellm.acompletion", new_callable=AsyncMock,
+        return_value=_mock_llm_response(json.dumps({"comments": [entry]})),
+    ):
+        result = await LLMCoachService(model="test-model").generate_full_commentary({
+            "moves": _review_context()["moments"],
+        })
+    comment = result.comments[0]
+    assert comment.comparison == "Supported comparison."
+    for explanation in (comment.played, comment.alternative):
+        for section in sections:
+            assert getattr(explanation, section) == "Supported position-specific prose."
+
+
+@pytest.mark.parametrize("mutation", [
+    "bool_index", "string_index", "float_index", "negative_index", "extra_entry",
+    "extra_branch", "extra_response", "null_played", "bad_json",
+])
+async def test_full_commentary_rejects_untrusted_response_shape(mutation):
+    entry = _full_comment()
+    response = {"comments": [entry]}
+    if mutation.endswith("index"):
+        entry["move_index"] = {
+            "bool_index": True, "string_index": "0", "float_index": 0.0, "negative_index": -1,
+        }[mutation]
+    elif mutation == "extra_entry":
+        entry["move_san"] = "e4"
+    elif mutation == "extra_branch":
+        entry["alternative"]["move_san"] = "d4"
+    elif mutation == "extra_response":
+        response["summary"] = "Unrequested summary."
+    elif mutation == "null_played":
+        entry["played"] = None
+    raw = "{broken" if mutation == "bad_json" else json.dumps(response)
+    with patch(
+        "app.services.llm_coach.litellm.acompletion", new_callable=AsyncMock,
+        return_value=_mock_llm_response(raw),
+    ), pytest.raises(LLMCoachError) as caught:
+        await LLMCoachService(model="test-model").generate_full_commentary({
+            "moves": _review_context()["moments"],
+        })
+    assert caught.value.usage["total_tokens"] == 70
+
+
+async def test_full_commentary_provider_failure_does_not_retry():
+    with patch(
+        "app.services.llm_coach.litellm.acompletion", new_callable=AsyncMock,
+        side_effect=TimeoutError,
+    ) as call, pytest.raises(LLMCoachError):
+        await LLMCoachService(model="test-model").generate_full_commentary({
+            "moves": _review_context()["moments"],
+        })
+    call.assert_awaited_once()
+
+
+@pytest.mark.parametrize("field", [
+    "idea", "pros", "cons", "tactics", "plan", "opponent_reply", "missed_opportunity",
+])
+@pytest.mark.parametrize("value", [[], 1, True, " ", "x" * 2401])
+def test_move_explanation_rejects_invalid_fields(field, value):
+    with pytest.raises(ValidationError):
+        MoveExplanation.model_validate({"idea": "A concrete idea.", field: value})
+
+
+@pytest.mark.parametrize("field", [
+    "pros", "cons", "tactics", "plan", "opponent_reply", "missed_opportunity",
+])
+def test_move_explanation_optional_prose_is_nullable_and_trimmed(field):
+    assert getattr(MoveExplanation(idea="Idea", **{field: None}), field) is None
+    explanation = MoveExplanation(idea="Idea", **{field: "  Some prose.  "})
+    assert getattr(explanation, field) == "Some prose."
+
+
+@pytest.mark.parametrize("payload", [
+    {"played": {}}, {"played": {"idea": None}}, {"played": {"idea": "Idea", "san": "e4"}},
+    {"played": {"idea": "Idea"}, "extra": "no"},
+    {"played": {"idea": "Idea"}, "version": 1},
+    {"played": {"idea": "Idea"}, "comparison": " "},
+    {"played": {"idea": "Idea"}, "comparison": "x" * 2401},
+])
+def test_move_commentary_forbids_extra_fields_and_invalid_prose(payload):
+    with pytest.raises(ValidationError):
+        MoveCommentary.model_validate(payload)
+
+
+@pytest.mark.parametrize("branch", ["played", "alternative"])
+@pytest.mark.parametrize("field", [
+    "idea", "pros", "cons", "tactics", "plan", "opponent_reply", "missed_opportunity",
+])
+@pytest.mark.parametrize("notation", ["Nf3", "e2e4", "exd5", "O-O", "Фh5#"])
+async def test_full_commentary_rejects_notation_in_each_branch_field(branch, field, notation):
+    entry = _full_comment()
+    entry[branch][field] = f"Line: {notation}."
+    with patch(
+        "app.services.llm_coach.litellm.acompletion", new_callable=AsyncMock,
+        return_value=_mock_llm_response(json.dumps({"comments": [entry]})),
+    ), pytest.raises(LLMCoachError) as caught:
+        await LLMCoachService(model="test-model").generate_full_commentary({
+            "moves": _review_context()["moments"],
+        })
+    assert caught.value.usage["total_tokens"] == 70
+
+
+@pytest.mark.parametrize("value", ["Nf3", " ", [], 10, "x" * 2401])
+async def test_full_commentary_rejects_invalid_comparison(value):
+    entry = {**_full_comment(), "comparison": value}
+    with patch(
+        "app.services.llm_coach.litellm.acompletion", new_callable=AsyncMock,
+        return_value=_mock_llm_response(json.dumps({"comments": [entry]})),
+    ), pytest.raises(LLMCoachError):
+        await LLMCoachService(model="test-model").generate_full_commentary({
+            "moves": _review_context()["moments"],
+        })
+
+
+async def test_full_commentary_projection_keeps_alternative_material_hypothetical():
+    before = chess.Board("4k3/8/8/8/8/8/q7/R3K3 w Q - 0 1")
+    after = before.copy()
+    after.push_san("Rb1")
+    moment = _review_context()["moments"][0]
+    moment.update(
+        fen_before=before.fen(), fen_after=after.fen(), move_san="Rb1",
+        best_move_san="Rxa2", best_line=["Rxa2", "Kf7"], played_line=["Rb1", "Qa3"],
+    )
+    original = deepcopy(moment)
+    entry = _full_comment()
+    entry["played"]["plan"] = "При возможности белые могли бы активизировать ладью."
+    entry["alternative"]["pros"] = "Белые взяли бы ферзя в альтернативной линии."
+    entry["comparison"] = "Линии различаются сохранением ферзя соперника."
+    with patch(
+        "app.services.llm_coach.litellm.acompletion", new_callable=AsyncMock,
+        return_value=_mock_llm_response(json.dumps({"comments": [entry]})),
+    ) as call:
+        result = await LLMCoachService(model="test-model").generate_full_commentary({
+            "moves": [moment],
+        })
+    projected = json.loads(call.call_args.kwargs["messages"][1]["content"])["moments"][0]
+    actual = projected["actual_move"]
+    assert actual["source"] == "actual_game"
+    assert actual["events"] == []
+    assert actual["material_after"]["black"]["queen"] == ["a2"]
+    alternative = projected["engine_lines"]["alternative"]
+    assert alternative["source"] == "hypothetical_engine"
+    assert alternative["fen_start"] == before.fen()
+    assert alternative["moves"] == ["Rxa2", "Kf7"]
+    first = alternative["first_move"]
+    assert first["source"] == "hypothetical_engine"
+    assert first["material_before"]["black"]["queen"] == ["a2"]
+    assert first["material_after"]["black"]["queen"] == []
+    assert first["events"] == [{"ply": 1, "color": "white", "event": "capture", "piece": "queen"}]
+    assert projected["engine_lines"]["after_played_move"]["fen_start"] == after.fen()
+    assert result.comments[0].played.plan is not None
+    assert result.comments[0].alternative.pros is not None
+    assert moment == original
+
+
+@pytest.mark.parametrize("mutation", ["illegal_best", "no_best_with_line", "bad_played", "color"])
+async def test_full_commentary_invalid_evidence_fails_before_provider(mutation):
+    moment = _review_context()["moments"][0]
+    if mutation == "illegal_best":
+        moment["best_line"] = ["d4", "d4"]
+    elif mutation == "no_best_with_line":
+        moment["best_move_san"] = ""
+    elif mutation == "bad_played":
+        moment["fen_after"] = moment["fen_before"]
+    else:
+        moment["color"] = "unknown"
+    with (
+        patch("app.services.llm_coach.litellm.acompletion", new_callable=AsyncMock) as call,
+        pytest.raises(LLMCoachError),
+    ):
+        await LLMCoachService(model="test-model").generate_full_commentary({"moves": [moment]})
+    call.assert_not_awaited()
 
 
 class TestReviewExplanation:

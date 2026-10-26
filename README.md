@@ -13,6 +13,7 @@ AI-powered chess game analysis and coaching: Stockfish analysis, LLM commentary,
 - **Основной**: [JetBrains Mono](https://fonts.google.com/specimen/JetBrains+Mono) (400, 500, 600)
 - Подключение: Google Fonts, `font-family: "JetBrains Mono", monospace`
 - Эффект: техничный, читаемый моноширинный стиль, ассоциируется с шахматной нотацией
+- На странице разбора партии интерфейс и объяснения используют системный sans-serif (`font-coach`); шахматная нотация и оценки сохраняют JetBrains Mono (`font-mono`). Остальные страницы не меняются.
 
 ### Цветовая палитра
 
