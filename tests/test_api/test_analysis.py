@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import uuid
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import chess
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.dialects import postgresql
 
 from app.models.game import Game
+from app.services.opening_matcher import OpeningMatcher
+from app.services.pgn_parser import PGNParserService
 from tests.test_api.conftest import (
     make_game,
     make_game_analysis,
@@ -64,6 +67,85 @@ async def test_get_analysis_returns_analysis_with_moves(
     assert data["summary"] is None
     assert data["accuracy_white"] is None
     assert data["accuracy_black"] is None
+
+
+async def test_theory_marks_only_opening_prefix_without_overriding_engine(
+    client: AsyncClient, mock_session: AsyncMock,
+) -> None:
+    game = make_game(pgn_text="1. e4 e5 2. Qh5 Nc6 3. Bc4 Nf6 4. Qxf7# 1-0")
+    analysis = make_game_analysis(game_id=game.id)
+    parsed = PGNParserService().parse_pgn(game.pgn_text)[0]
+    opening = OpeningMatcher().match(parsed.moves)
+    assert opening is not None
+    assert 0 < opening.move_count < len(parsed.moves)
+    board = chess.Board()
+    records = []
+    for move in parsed.moves:
+        records.append(make_move_analysis(
+            move_number=board.fullmove_number,
+            color="white" if board.turn else "black", move_san=board.san(move),
+            classification="inaccuracy", score_after={"cp": 30},
+        ))
+        board.push(move)
+    analysis.moves = records
+    mock_session.get.return_value = game
+    set_scalar_results(mock_session, analysis, None)
+
+    response = await client.get(f"/api/games/{game.id}/analysis")
+
+    assert response.status_code == 200
+    moves = response.json()["moves"]
+    assert [m["is_theory"] for m in moves] == [
+        index < opening.move_count for index in range(len(records))
+    ]
+    assert all(m["classification"] == "inaccuracy" for m in moves)
+    assert all(m["score_after"]["cp"] == 30 for m in moves)
+
+
+async def test_no_opening_match_does_not_mark_theory(
+    client: AsyncClient, mock_session: AsyncMock,
+) -> None:
+    game = make_game()
+    analysis = make_game_analysis(game_id=game.id)
+    analysis.moves = [make_move_analysis()]
+    mock_session.get.return_value = game
+    set_scalar_results(mock_session, analysis, None)
+
+    with patch("app.api.analysis.OpeningMatcher.match", return_value=None):
+        response = await client.get(f"/api/games/{game.id}/analysis")
+
+    assert response.status_code == 200
+    assert response.json()["moves"][0]["is_theory"] is False
+
+
+@pytest.mark.parametrize("color", ["white", "black"])
+async def test_full_commentary_shared_by_both_sides_with_own_key_moments(
+    color, client: AsyncClient, mock_session: AsyncMock,
+) -> None:
+    game = make_game()
+    analysis = make_game_analysis(game_id=game.id)
+    analysis.moves = [make_move_analysis(), make_move_analysis(color="black", move_san="e5")]
+    context = {
+        "version": 1, "player_color": "white", "commentary_scope": "all_moves",
+        "engine_result_id": str(analysis.engine_result_id),
+        "moments": [], "moves": [{"move_index": 0}, {"move_index": 1}],
+        "moments_by_color": {
+            "white": [{"move_index": 0}], "black": [{"move_index": 1}],
+        },
+    }
+    review = make_side_review(
+        context=context, comments={"0": {"text": "Идея белых"}, "1": {"text": "Идея чёрных"}},
+    )
+    mock_session.get.return_value = game
+    set_scalar_results(mock_session, analysis, review)
+    response = await client.get(f"/api/games/{game.id}/analysis?player_color={color}")
+    assert response.status_code == 200
+    data = response.json()
+    assert [m["llm_comment"] for m in data["moves"]] == ["Идея белых", "Идея чёрных"]
+    assert data["review"]["player_color"] == color
+    assert data["review"]["owner_color"] == "white"
+    assert data["key_moments"] == context["moments_by_color"][color]
+    assert review.context["player_color"] == "white"  # GET never mutates persisted provenance.
 
 
 async def test_get_analysis_game_not_found(

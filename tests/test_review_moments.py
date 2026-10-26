@@ -66,6 +66,26 @@ def test_only_own_errors_and_no_forced_five() -> None:
     assert build_review_context(pgn, _evaluations(pgn), "white")["moments"] == []
 
 
+def test_full_context_contains_every_ply_even_without_errors() -> None:
+    pgn = "1. e4 e5 2. Nf3 Nc6 *"
+    context = build_review_context(pgn, _evaluations(pgn), "white", include_all_moves=True)
+    assert context["commentary_scope"] == "all_moves"
+    assert [move["move_index"] for move in context["moves"]] == [0, 1, 2, 3]
+    assert [move["color"] for move in context["moves"]] == ["white", "black"] * 2
+    assert all(move["is_theory"] for move in context["moves"])
+    assert context["moments_by_color"] == {"white": [], "black": []}
+
+
+def test_full_context_keeps_key_moments_separate_by_color() -> None:
+    pgn = "1. e4 e5 2. Nf3 Nc6 *"
+    evaluations = [_error(ev) for ev in _evaluations(pgn)]
+    context = build_review_context(pgn, evaluations, "white", include_all_moves=True)
+    assert len(context["moves"]) == 4
+    for color in ("white", "black"):
+        assert context["moments_by_color"][color]
+        assert all(move["color"] == color for move in context["moments_by_color"][color])
+
+
 def test_actual_move_reply_and_alternative_replay_from_fen_before() -> None:
     pgn = "1. f3 e5 2. g4 Qh4# 0-1"
     evaluations = _evaluations(pgn)

@@ -38,6 +38,11 @@ export function CommentaryPanel({
                   {classificationMeta.label}
                 </span>
               )}
+              {move.is_theory && (
+                <span className={`rounded border px-2 py-0.5 ${CLASSIFICATION_META.theory.colorClass}`}>
+                  Теория: ход из дебютной базы
+                </span>
+              )}
             </div>
             {comment ? (
               <p className="whitespace-pre-wrap leading-relaxed">{comment}</p>

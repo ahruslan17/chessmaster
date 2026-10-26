@@ -25,6 +25,8 @@ from app.schemas.analysis import (
     SideReviewRead,
 )
 from app.services.game_review import GameReviewService
+from app.services.opening_matcher import OpeningMatcher
+from app.services.pgn_parser import PGNParserService
 
 router = APIRouter(prefix="/games/{game_id}/analysis", tags=["analysis"])
 PlayerColor = Literal["white", "black"]
@@ -68,8 +70,12 @@ async def _get_review(
     result = await session.execute(
         select(SideReview).where(
             SideReview.game_analysis_id == analysis_id,
-            SideReview.player_color == player_color,
-        )
+            (SideReview.player_color == player_color)
+            | (SideReview.context["commentary_scope"].astext == "all_moves"),
+        ).order_by(
+            (SideReview.context["commentary_scope"].astext == "all_moves").desc().nulls_last(),
+            (SideReview.player_color == player_color).desc(),
+        ).limit(1)
     )
     review = result.scalar_one_or_none()
     return review if isinstance(review, SideReview) else None
@@ -78,6 +84,8 @@ async def _get_review(
 def _comment_text(comment: dict[str, str] | None) -> str | None:
     if not comment:
         return None
+    if comment.get("text"):
+        return comment["text"]
     return "\n".join(comment.get(key, "") for key in (
         "reason", "consequence", "alternative", "principle", "limitation",
     ) if comment.get(key)) or None
@@ -90,7 +98,7 @@ async def get_game_analysis(
     player_color: PlayerColor | None = None,
     access_session_id: AccessSessionIdDep = None,
 ) -> GameAnalysisRead:
-    """Read engine data and only the selected side's saved explanations."""
+    """Read saved full-game commentary and selected-side educational highlights."""
     game, analysis = await _get_analysis(game_id, session, access_session_id)
     review = await _get_review(session, analysis.id, player_color or game.player_color)
     verified = analysis.score_version == 1
@@ -103,10 +111,21 @@ async def get_game_analysis(
     ):
         review = None
     comments = (review.comments or {}) if verified and review is not None else {}
+    review_context = dict(review.context or {}) if review else {}
+    selected_color = player_color or game.player_color
+    if review_context.get("commentary_scope") == "all_moves":
+        review_context.pop("moves", None)  # Internal engine evidence is not a viewer payload.
+        highlights = review_context.pop("moments_by_color", {})
+        review_context["player_color"] = selected_color
+        review_context["moments"] = highlights.get(selected_color, [])
+    parsed_games = PGNParserService().parse_pgn(game.pgn_text)
+    opening = OpeningMatcher().match(parsed_games[0].moves) if parsed_games else None
+    opening_move_count = opening.move_count if opening else 0
     moves = []
     ordered_moves = sorted(analysis.moves, key=lambda m: (m.move_number, m.color != "white"))
     for index, record in enumerate(ordered_moves):
         move = MoveAnalysisRead.model_validate(record)
+        move.is_theory = index < opening_move_count
         move.llm_comment = _comment_text(comments.get(str(index)))
         if not verified:
             move.score_before = None
@@ -127,7 +146,7 @@ async def get_game_analysis(
         id=analysis.id, game_id=game_id, created_at=analysis.created_at,
         status=analysis.status, moves=moves,
         summary=review.summary if verified and review else None,
-        key_moments=(review.context or {}).get("moments", []) if verified and review else [],
+        key_moments=review_context.get("moments", []) if verified and review else [],
         coach_feedback=(
             {"focus_points": review.recommendations or []} if verified and review else None
         ),
@@ -140,8 +159,9 @@ async def get_game_analysis(
         progress_total=analysis.progress_total or 0,
         heartbeat_at=analysis.heartbeat_at, score_version=analysis.score_version,
         review=SideReviewRead(
-            player_color=review.player_color, status=review.status, error=review.error,
-            context=review.context or {}, comments=review.comments or {}, summary=review.summary,
+            player_color=selected_color, owner_color=review.player_color,
+            status=review.status, error=review.error,
+            context=review_context, comments=review.comments or {}, summary=review.summary,
             recommendations=review.recommendations or [], attempt_id=review.attempt_id,
             task_id=review.task_id, usage=review.usage or {},
         ) if verified and review else None,
@@ -295,7 +315,7 @@ async def start_explanations(
     if queued:
         published = await publish_attempt(
             session, stage="coach", entity_id=review.id, game_id=game_id,
-            attempt_id=review.attempt_id, task_id=review.task_id, player_color=body.player_color,
+            attempt_id=review.attempt_id, task_id=review.task_id, player_color=review.player_color,
         )
         if not published:
             raise HTTPException(

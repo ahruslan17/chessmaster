@@ -90,7 +90,7 @@ function MoveChip({
     <button
       type="button"
       onClick={onClick}
-      title={cp ? `${move.move_san}  -  ${cp}` : move.move_san}
+      title={[move.move_san, move.is_theory ? "Теория: ход из дебютной базы" : null, cp].filter(Boolean).join(" · ")}
       className={`rounded-md border px-2 py-0.5 text-sm font-semibold tracking-tight transition ${
         isActive
           ? "ring-2 ring-chess-highlight ring-offset-1 ring-offset-stone-100 dark:ring-offset-chess-dark"
@@ -98,6 +98,7 @@ function MoveChip({
       } ${colorClass}`}
     >
       {move.move_san}
+      {move.is_theory && <img src={CLASSIFICATION_META.theory.iconSrc} alt="Теория" className="ml-1 inline-block h-3.5 w-3.5" />}
     </button>
   );
 }

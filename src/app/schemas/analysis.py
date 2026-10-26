@@ -18,6 +18,7 @@ class EngineScoreRead(BaseModel):
 
 class SideReviewRead(BaseModel):
     player_color: Literal["white", "black"]
+    owner_color: Literal["white", "black"] | None = None
     status: str
     error: str | None = None
     context: dict[str, Any] = Field(default_factory=dict)
@@ -44,6 +45,7 @@ class MoveAnalysisRead(BaseModel):
     eval_after: float | None = None
     centipawn_loss: float | None = None
     classification: str | None = None
+    is_theory: bool = False
     top_moves: Any | None = None
     continuation_lines: Any | None = None
     llm_comment: str | None = None

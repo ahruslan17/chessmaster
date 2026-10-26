@@ -25,7 +25,7 @@ export function GameViewer() {
   const [rotated, setRotated] = useState(false);
   const [requestBusy, setRequestBusy] = useState(false);
   const [requestError, setRequestError] = useState<string | null>(null);
-  const [variation, setVariation] = useState<{ title: string; positions: string[]; moves: string[]; index: number } | null>(null);
+  const [variation, setVariation] = useState<{ kind: "played" | "best"; title: string; positions: string[]; moves: string[]; index: number; startNumber: number; startsBlack: boolean } | null>(null);
   const [variationError, setVariationError] = useState<string | null>(null);
   const [boardElement, setBoardElement] = useState<HTMLDivElement | null>(null);
   const [boardSize, setBoardSize] = useState(240);
@@ -49,12 +49,20 @@ export function GameViewer() {
   });
   const currentMove = currentMoveIndex > 0 ? moves[currentMoveIndex - 1] ?? null : null;
   const currentFen = variation?.positions[variation.index] ?? replay.positions[currentMoveIndex] ?? INITIAL_FEN;
-  const lastMoveSquares = variation ? null : replay.squares[currentMoveIndex - 1] ?? null;
+  const variationMove = useMemo(() => {
+    if (!variation || variation.index === 0) return null;
+    const board = new Chess(variation.positions[variation.index - 1]);
+    const move = board.move(variation.moves[variation.index - 1]);
+    return { from: move.from, to: move.to };
+  }, [variation]);
+  const lastMoveSquares = variation ? variationMove ?? null : replay.squares[currentMoveIndex - 1] ?? null;
   const score = variation ? null : currentMoveIndex > 0 ? currentMove?.score_after : analysis?.moves[0]?.score_before;
   const baseOrientation = game?.player_color === "black" ? "black" : "white";
   const orientation = rotated ? (baseOrientation === "white" ? "black" : "white") : baseOrientation;
   const maxIndex = replay.moves.length;
-  const currentBadge = currentMove?.classification
+  const currentBadge = currentMove?.is_theory
+    ? CLASSIFICATION_META.theory
+    : currentMove?.classification
     ? CLASSIFICATION_META[currentMove.classification as keyof typeof CLASSIFICATION_META]
     : null;
   const missingAnalysis = analysisError instanceof api.ApiError && analysisError.status === 404;
@@ -76,13 +84,18 @@ export function GameViewer() {
 
   // Autoplay
   useEffect(() => {
-    if (!autoplay || currentMoveIndex >= maxIndex) {
+    const index = variation?.index ?? currentMoveIndex;
+    const end = variation?.moves.length ?? maxIndex;
+    if (!autoplay || index >= end) {
       setAutoplay(false);
       return;
     }
-    const t = setTimeout(() => setCurrentMoveIndex((index) => index + 1), 800);
+    const t = setTimeout(() => {
+      if (variation) setVariation((line) => line ? { ...line, index: line.index + 1 } : null);
+      else setCurrentMoveIndex((value) => value + 1);
+    }, 800);
     return () => clearTimeout(t);
-  }, [autoplay, currentMoveIndex, maxIndex]);
+  }, [autoplay, currentMoveIndex, maxIndex, variation]);
 
   const goToMove = useCallback((index: number) => {
     setVariation(null);
@@ -90,6 +103,17 @@ export function GameViewer() {
     setAutoplay(false);
     setCurrentMoveIndex(Math.max(0, Math.min(index, maxIndex)));
   }, [maxIndex]);
+
+  const navigateBoard = (index: number) => {
+    setAutoplay(false);
+    if (variation) setVariation({ ...variation, index: Math.max(0, Math.min(index, variation.moves.length)) });
+    else goToMove(index);
+  };
+
+  const returnToGame = () => {
+    setAutoplay(false);
+    setVariation(null);
+  };
 
   const start = async (kind: "engine" | "review", recover = false) => {
     if (!gameId || (kind === "review" && !playerColor)) return;
@@ -101,7 +125,7 @@ export function GameViewer() {
     setRequestError(null);
     try {
       if (kind === "engine") await api.startAnalysis(gameId, recover, expectedAttemptId);
-      else await api.startExplanations(gameId, playerColor!, recover, expectedAttemptId);
+      else await api.startExplanations(gameId, recover ? analysis?.review?.owner_color ?? playerColor! : playerColor!, recover, expectedAttemptId);
     } catch (error) {
       setRequestError(error instanceof Error ? error.message : "Не удалось запустить задачу");
     } finally {
@@ -124,7 +148,7 @@ export function GameViewer() {
         positions.push(chess.fen());
       }
       setCurrentMoveIndex(moment.move_index + 1);
-      setVariation({ title: kind === "played" ? "Сыгранный вариант" : "Лучший вариант", positions, moves: line.slice(0, 8), index: 0 });
+      setVariation({ kind, title: kind === "played" ? "Продолжение после хода в партии" : "Лучшее продолжение", positions, moves: line.slice(0, 8), index: 1, startNumber: moment.move_number, startsBlack: moment.color === "black" });
     } catch {
       setVariationError("Линия недоступна или не соответствует позиции. Ходы партии не изменены.");
     }
@@ -155,9 +179,14 @@ export function GameViewer() {
   const actualEngineStatus = engineStatus ?? analysis?.engine_status ?? "pending";
   const engineBusy = actualEngineStatus === "queued" || actualEngineStatus === "in_progress";
   const reviewStatus = status?.review_status ?? verifiedReview?.status;
+  const fullCommentary = verifiedReview?.context?.commentary_scope === "all_moves";
+  const commentaryComplete = fullCommentary && verifiedReview?.status === "done";
+  const commentCount = Object.keys(verifiedReview?.comments ?? {}).length;
   const reviewBusy = reviewStatus === "queued" || reviewStatus === "in_progress";
   const moments = verifiedReview?.context?.moments ?? [];
   const selectedMoment = moments.find((moment) => moment.move_index === currentMoveIndex - 1);
+  const boardIndex = variation?.index ?? currentMoveIndex;
+  const boardMaxIndex = variation?.moves.length ?? maxIndex;
 
   return (
     <div className="space-y-6">
@@ -173,15 +202,15 @@ export function GameViewer() {
             {game.white_player} vs {game.black_player}
           </h1>
           <p className="text-sm text-stone-500 dark:text-stone-400">
-            {game.result} {game.opening_name ? ` - ${game.opening_name}` : ""}
+            {game.result} {game.eco_code} {game.opening_name ? ` - ${game.opening_name}` : ""}
           </p>
         </div>
       </div>
 
       <section className="space-y-3 rounded-lg border border-stone-300 bg-stone-200/50 p-4 text-sm dark:border-stone-600 dark:bg-chess-light/30">
         <div className="flex flex-wrap items-center gap-3">
-          <label htmlFor="review-color">Разбор моей стороны</label>
-          <select id="review-color" value={playerColor ?? ""} disabled={requestBusy} onChange={(event) => { setChosenColor(event.target.value as PlayerColor); setRequestError(null); setVariation(null); }} className="rounded border border-stone-400 bg-white px-3 py-2 dark:border-stone-600 dark:bg-chess-dark">
+          <label htmlFor="review-color">Сторона для учебных моментов</label>
+          <select id="review-color" value={playerColor ?? ""} disabled={requestBusy} onChange={(event) => { setChosenColor(event.target.value as PlayerColor); setRequestError(null); setVariation(null); setAutoplay(false); }} className="rounded border border-stone-400 bg-white px-3 py-2 dark:border-stone-600 dark:bg-chess-dark">
             <option value="" disabled>Выберите сторону</option>
             <option value="white">Белые</option>
             <option value="black">Чёрные</option>
@@ -189,14 +218,13 @@ export function GameViewer() {
           <NavButton onClick={() => setRotated((value) => !value)}>↻ Повернуть доску</NavButton>
         </div>
         {!playerColor && <p>Выберите сторону для учебного разбора. Просмотр ходов доступен без выбора.</p>}
-        <p className="text-stone-600 dark:text-stone-300">Смена стороны и поворот доски ничего не запускают. Движок и объяснения — отдельные действия.</p>
+        <p className="text-stone-600 dark:text-stone-300">Полный разбор комментирует каждый ход обеих сторон. Выбор стороны меняет подборку учебных моментов, но не запускает генерацию. Поворот доски независим.</p>
         <div role="status" aria-live="polite" className="space-y-1">
           <p>Движок: {statusLabel(actualEngineStatus)}{(status?.progress_total ?? analysis?.progress_total ?? 0) > 0 ? ` · ${status?.progress_current ?? analysis?.progress_current ?? 0}/${status?.progress_total ?? analysis?.progress_total}` : ""}</p>
-          <p>Объяснения: {playerColor ? statusLabel(reviewStatus ?? "pending") : "сторона не выбрана"}</p>
+          <p>Комментарии: {playerColor ? statusLabel(fullCommentary ? reviewStatus ?? "pending" : "pending") : "выберите сторону для учебных моментов"}{fullCommentary ? ` · ${commentCount}/${moves.length} полуходов` : ""}</p>
           {analysisLoading && <p>Загрузка сохранённого анализа…</p>}
-          {actualEngineStatus === "done" && !verifiedReview && <p>Доступен только движок. Старые или непроверенные тексты скрыты; создайте объяснения выбранной стороны.</p>}
-          {reviewStatus === "partial" && <p>Объяснения готовы частично. Сохранённые комментарии доступны; можно повторить только объяснения.</p>}
-          {verifiedReview?.error === "context_empty" && <p>Движок не выделил полезных собственных ошибок для объяснения. Моменты не добавляются искусственно; учебный текст не генерировался.</p>}
+          {actualEngineStatus === "done" && !fullCommentary && <p>Полный походовый разбор ещё не создан. Нажмите «Комментировать все ходы». Сохранённые комментарии останутся доступны.</p>}
+          {reviewStatus === "partial" && fullCommentary && <p>Разбор готов частично. Дополнение обработает только ходы без комментариев; движок повторно не запускается.</p>}
           {!!Object.keys(verifiedReview?.comments ?? {}).length && <p>Структура и линии проверены автоматически. Смысл объяснений ещё требует экспертной оценки.</p>}
           {analysis && actualEngineStatus === "done" && analysis.score_version !== 1 && <p>Старый анализ: знак и мат по прежним оценкам не восстанавливаются. Для проверенных оценок повторите движок.</p>}
           {(status?.engine_error || analysis?.engine_error) && <p className="break-words text-red-400">Движок: {status?.engine_error ?? analysis?.engine_error}. Сохранённые ходы не удалены.</p>}
@@ -204,7 +232,7 @@ export function GameViewer() {
         </div>
         <div className="flex flex-wrap gap-2">
           <NavButton onClick={() => void start("engine")} disabled={requestBusy || engineBusy || reviewBusy || (actualEngineStatus === "done" && analysis?.score_version === 1) || !!statusError || !!analysisReadError}>{actualEngineStatus === "done" && analysis?.score_version === 1 ? "Данные движка сохранены" : actualEngineStatus === "failed" || actualEngineStatus === "done" ? "Повторить движок" : "Запустить движок"}</NavButton>
-          <NavButton onClick={() => void start("review")} disabled={requestBusy || engineBusy || reviewBusy || verifiedReview?.status === "done" || actualEngineStatus !== "done" || !playerColor || !!statusError || !!analysisReadError}>{verifiedReview?.status === "done" ? "Разбор стороны сохранён" : verifiedReview ? "Дополнить объяснения" : "Разобрать эту сторону / Создать объяснения"}</NavButton>
+          <NavButton onClick={() => void start("review")} disabled={requestBusy || engineBusy || reviewBusy || commentaryComplete || actualEngineStatus !== "done" || !playerColor || !!statusError || !!analysisReadError}>{commentaryComplete ? "Все ходы прокомментированы" : fullCommentary ? "Дополнить комментарии" : "Комментировать все ходы"}</NavButton>
           <NavButton onClick={() => { void refetchStatus(); void refetchAnalysis(); }} disabled={requestBusy}>Обновить статус</NavButton>
         </div>
         {(engineBusy || reviewBusy) && <div className="space-y-2">
@@ -231,7 +259,7 @@ export function GameViewer() {
               orientation={orientation}
               lastMove={lastMoveSquares}
               moveBadge={
-                currentBadge && lastMoveSquares
+                !variation && currentBadge && lastMoveSquares
                   ? {
                       square: lastMoveSquares.to,
                       iconSrc: currentBadge.iconSrc,
@@ -242,33 +270,37 @@ export function GameViewer() {
               boardWidth={boardSize}
             />
 
-            {variation && <div className="space-y-2 rounded border border-stone-400 p-3 text-sm dark:border-stone-600">
-              <p>{variation.title} · {variation.index}/{variation.moves.length}</p>
-              <p className="break-words">{variation.moves.join(" ")}</p>
-              <div className="flex flex-wrap gap-2">
-                <NavButton disabled={variation.index === 0} onClick={() => setVariation({ ...variation, index: variation.index - 1 })}>← Вариант</NavButton>
-                <NavButton disabled={variation.index >= variation.moves.length} onClick={() => setVariation({ ...variation, index: variation.index + 1 })}>Вариант →</NavButton>
-                <NavButton onClick={() => setVariation(null)}>Вернуться к партии</NavButton>
+            {variation && <div aria-label="Линия движка" className="space-y-2 rounded border border-chess-highlight p-3 text-sm">
+              <p role="status"><strong>Линия движка</strong> · {variation.title} · {variation.index === 0 ? "Позиция до хода" : `Полуход ${variation.index} из ${variation.moves.length}`}</p>
+              <p className="text-stone-600 dark:text-stone-300">Возможное продолжение, не ходы из партии. Стрелки под доской листают эту линию.</p>
+              <div className="flex flex-wrap gap-1" aria-label="Ходы линии движка">
+                <NavButton active={variation.index === 0} onClick={() => navigateBoard(0)}>До хода</NavButton>
+                {variation.moves.map((san, index) => {
+                  const ply = index + (variation.startsBlack ? 1 : 0);
+                  const label = `${variation.startNumber + Math.floor(ply / 2)}${ply % 2 ? "…" : "."} ${san}`;
+                  return <NavButton key={index} active={variation.index === index + 1} onClick={() => navigateBoard(index + 1)}>{label}</NavButton>;
+                })}
               </div>
-              <p>Оценка линии не показана: оценка партии относится к другой позиции.</p>
+              <NavButton onClick={returnToGame}>Вернуться к ходу {currentMove?.move_number}{currentMove?.color === "black" ? "…" : "."} {currentMove?.move_san} в партии</NavButton>
+              <p className="text-stone-600 dark:text-stone-300">Оценка и комментарий партии не относятся к позиции внутри линии.</p>
             </div>}
             {variationError && <p role="alert" className="text-sm text-red-400">{variationError}</p>}
             <div className="flex flex-wrap gap-2">
-              <NavButton onClick={() => goToMove(0)} disabled={currentMoveIndex === 0}>
+              <NavButton onClick={() => navigateBoard(0)} disabled={boardIndex === 0}>
                 ⏮ В начало
               </NavButton>
-              <NavButton onClick={() => goToMove(currentMoveIndex - 1)} disabled={currentMoveIndex === 0}>
+              <NavButton onClick={() => navigateBoard(boardIndex - 1)} disabled={boardIndex === 0}>
                 ← Назад
               </NavButton>
-              <NavButton onClick={() => goToMove(currentMoveIndex + 1)} disabled={currentMoveIndex >= maxIndex}>
+              <NavButton onClick={() => navigateBoard(boardIndex + 1)} disabled={boardIndex >= boardMaxIndex}>
                 Вперед →
               </NavButton>
-              <NavButton onClick={() => goToMove(maxIndex)} disabled={currentMoveIndex >= maxIndex}>
+              <NavButton onClick={() => navigateBoard(boardMaxIndex)} disabled={boardIndex >= boardMaxIndex}>
                 В конец ⏭
               </NavButton>
               <NavButton
                 onClick={() => setAutoplay((value) => !value)}
-                disabled={currentMoveIndex >= maxIndex || !!variation}
+                disabled={boardIndex >= boardMaxIndex}
                 active={autoplay}
               >
                 {autoplay ? "⏸ Пауза" : "▶ Автоплей"}
@@ -288,12 +320,13 @@ export function GameViewer() {
 
           <section className="space-y-3 rounded-lg border border-stone-300 p-4 text-sm dark:border-stone-600">
             <h3 className="font-semibold text-stone-600 dark:text-stone-400">Учебные моменты выбранной стороны</h3>
-            {moments.length ? <div className="flex flex-wrap gap-2">{moments.map((moment) => <NavButton key={moment.move_index} active={currentMoveIndex === moment.move_index + 1} onClick={() => goToMove(moment.move_index + 1)}>{moment.move_number}{moment.color === "white" ? "." : "…"} {moment.move_san}</NavButton>)}</div> : <p>Проверенных учебных моментов пока нет. Не каждый ход требует объяснения.</p>}
+            {moments.length ? <div className="flex flex-wrap gap-2">{moments.map((moment) => <NavButton key={moment.move_index} active={currentMoveIndex === moment.move_index + 1} onClick={() => goToMove(moment.move_index + 1)}>{moment.move_number}{moment.color === "white" ? "." : "…"} {moment.move_san}</NavButton>)}</div> : <p>{fullCommentary ? "Для выбранной стороны движок не выделил ошибок. Комментарии ко всем ходам доступны независимо от этой подборки." : "Подборка появится при запуске полного разбора. Она не ограничивает комментарии к остальным ходам."}</p>}
             {selectedMoment && <div className="flex flex-wrap gap-2">
-              <NavButton onClick={() => playLine(selectedMoment, "played")} disabled={readLine(selectedMoment.played_line).length === 0}>Сыгранный вариант</NavButton>
-              <NavButton onClick={() => playLine(selectedMoment, "best")} disabled={readLine(selectedMoment.best_line).length === 0}>Лучший вариант</NavButton>
+              <NavButton active={variation?.kind === "played"} onClick={() => playLine(selectedMoment, "played")} disabled={readLine(selectedMoment.played_line).length === 0}>После {selectedMoment.move_san} в партии</NavButton>
+              <NavButton active={variation?.kind === "best"} onClick={() => playLine(selectedMoment, "best")} disabled={readLine(selectedMoment.best_line).length === 0}>Лучше: {selectedMoment.best_move_san}</NavButton>
             </div>}
           </section>
+          {variation && <p role="note" className="text-sm text-stone-600 dark:text-stone-300">Комментарий ниже относится к ходу {currentMove?.move_number}{currentMove?.color === "black" ? "…" : "."} {currentMove?.move_san} из партии, а не к открытой линии движка.</p>}
           <CommentaryPanel move={currentMove} summary={verifiedReview?.summary} />
           {!!verifiedReview?.recommendations.length && <section className="rounded-lg border border-stone-300 p-4 text-sm dark:border-stone-600"><h3 className="mb-2 font-semibold">Что тренировать</h3><ul className="list-inside list-disc space-y-2">{verifiedReview.recommendations.map((text, index) => <li key={index}>{text}</li>)}</ul></section>}
 
@@ -325,6 +358,7 @@ function NavButton({
       type="button"
       onClick={onClick}
       disabled={disabled}
+      aria-pressed={active}
       className={`min-h-10 rounded px-2 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-40 ${
         active
           ? "bg-chess-highlight text-stone-100"

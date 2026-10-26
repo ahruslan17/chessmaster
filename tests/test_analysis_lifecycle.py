@@ -12,7 +12,7 @@ from app.models.game import Game
 from app.models.game_analysis import GameAnalysis
 from app.models.side_review import SideReview
 from app.services.game_review import GameReviewService, _build_move_analysis, _restore_evaluation
-from app.services.llm_coach import ReviewComment, ReviewExplanationResult
+from app.services.llm_coach import FullCommentaryResult, ReviewComment, ReviewExplanationResult
 from app.services.stockfish_analyzer import EngineScore, MoveEvaluation
 from app.tasks import analysis as tasks
 from tests.conftest import SAMPLE_PGN_SINGLE
@@ -250,7 +250,7 @@ async def test_legacy_llm_save_refuses_versioned_analysis():
 
 
 @pytest.mark.asyncio
-async def test_empty_useful_context_finishes_without_coach_publication(monkeypatch):
+async def test_no_selected_errors_still_queues_commentary_for_every_move(monkeypatch):
     analysis = owner()
     evaluation = MoveEvaluation(
         move_number=1, color="white", move_san="e4", best_move_san="e4",
@@ -263,11 +263,14 @@ async def test_empty_useful_context_finishes_without_coach_publication(monkeypat
     )
     monkeypatch.setattr(
         "app.services.review_moments.build_review_context",
-        lambda *_: {"version": 1, "player_color": "white", "moments": []},
+        lambda *_, **__: {
+            "version": 1, "player_color": "white", "moments": [],
+            "commentary_scope": "all_moves", "moves": [{"move_index": 0}],
+        },
     )
     review, queued = await GameReviewService(session).queue_explanations(analysis.game_id, "white")
-    assert not queued and review.status == "done" and review.error == "context_empty"
-    assert review.task_id is None
+    assert queued and review.status == "queued" and review.error is None
+    assert review.task_id is not None
     assert review.context["engine_result_id"] == str(analysis.engine_result_id)
 
 
@@ -289,7 +292,10 @@ async def test_new_engine_generation_archives_old_text_without_merging(monkeypat
     )
     monkeypatch.setattr(
         "app.services.review_moments.build_review_context",
-        lambda *_: {"version": 1, "player_color": "white", "moments": [{"move_index": 0}]},
+        lambda *_, **__: {
+            "version": 1, "player_color": "white", "moments": [{"move_index": 0}],
+            "commentary_scope": "all_moves", "moves": [{"move_index": 0}],
+        },
     )
     returned, queued = await GameReviewService(session).queue_explanations(
         analysis.game_id, "white"
@@ -339,6 +345,101 @@ async def test_validation_failure_usage_saved_without_erasing_text(monkeypatch):
     await tasks._fail_explanations(review.id, attempt, "invalid", {"total_tokens": 21})
     assert review.status == "partial" and review.summary == "Ready summary"
     assert review.usage["attempts"][str(attempt)]["total_tokens"] == 21
+
+
+@pytest.mark.asyncio
+async def test_full_batches_save_progress_and_complete_only_when_every_ply_is_present(monkeypatch):
+    analysis, attempt = owner(), uuid.uuid4()
+    review = SideReview(
+        id=uuid.uuid4(), attempt_id=attempt, status="in_progress",
+        context={"engine_result_id": str(analysis.engine_result_id),
+                 "moves": [{"move_index": i} for i in range(3)]},
+        comments={"0": {"reason": "Existing explanation"}},
+    )
+    for indices, finalize, expected_status in [([1], False, "in_progress"), ([], True, "partial")]:
+        bind_session(monkeypatch, session_with(result(analysis), result(review)))
+        status = await tasks._save_full_commentary(
+            review.id, attempt, FullCommentaryResult(
+                comments={i: "Новый комментарий" for i in indices}, usage={"total_tokens": 10},
+            ), finalize=finalize,
+        )
+        assert status == expected_status
+    assert review.comments["0"] == {"reason": "Existing explanation"}
+    assert review.usage["total"]["total_tokens"] == 20
+    review.status = "in_progress"  # Explicitly claimed retry, same engine.
+    bind_session(monkeypatch, session_with(result(analysis), result(review)))
+    assert await tasks._save_full_commentary(
+        review.id, attempt, FullCommentaryResult(comments={2: "Последний комментарий"}),
+        finalize=True,
+    ) == "done"
+    assert review.error is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("partial", [False, True])
+async def test_full_worker_batches_only_missing_moves_and_requires_explicit_retry(
+    monkeypatch, partial,
+):
+    analysis, attempt = owner(), uuid.uuid4()
+    context = {
+        "commentary_scope": "all_moves", "engine_result_id": str(analysis.engine_result_id),
+        "moves": [{"move_index": i} for i in range(23)], "moments": [],
+    }
+    session = session_with(
+        result(analysis.id), result((uuid.uuid4(), context, {"0": {"text": "Ready"}})),
+    )
+    bind_session(monkeypatch, session)
+    monkeypatch.setattr(tasks, "_llm_enabled", lambda: True)
+    coach = MagicMock()
+
+    async def generate(batch):
+        moves = batch["moves"][:1] if partial else batch["moves"]
+        return FullCommentaryResult(comments={m["move_index"]: "Comment" for m in moves})
+
+    coach.generate_full_commentary = AsyncMock(side_effect=generate)
+    monkeypatch.setattr(tasks, "LLMCoachService", lambda: coach)
+    save = AsyncMock(return_value="in_progress")
+    monkeypatch.setattr(tasks, "_save_full_commentary", save)
+    await tasks._run_explanation_pipeline(str(analysis.game_id), "white", str(attempt))
+    calls = coach.generate_full_commentary.call_args_list
+    assert len(calls) == (1 if partial else 5)
+    assert [m["move_index"] for m in calls[0].args[0]["moves"]] == list(range(1, 6))
+    assert save.call_args.kwargs == {"finalize": True}
+    assert "missing_comment_indices" not in context
+
+
+@pytest.mark.asyncio
+async def test_other_side_reuses_full_review_without_new_attempt():
+    analysis = owner()
+    review = SideReview(
+        id=uuid.uuid4(), player_color="white", status="done", attempt_id=uuid.uuid4(),
+        context={"engine_result_id": str(analysis.engine_result_id),
+                 "commentary_scope": "all_moves", "player_color": "white"},
+    )
+    session = session_with(result(game(analysis)), result(analysis), result(review))
+    returned, queued = await GameReviewService(session).queue_explanations(
+        analysis.game_id, "black"
+    )
+    assert returned is review and not queued
+    session.flush.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_stale_full_commentary_cannot_write_into_new_engine_generation(monkeypatch):
+    analysis, attempt = owner(), uuid.uuid4()
+    review = SideReview(
+        id=uuid.uuid4(), attempt_id=attempt, status="in_progress",
+        context={"engine_result_id": str(uuid.uuid4()), "moves": [{"move_index": 0}]},
+        comments={"0": {"text": "Previously saved"}},
+    )
+    session = session_with(result(analysis), result(review))
+    bind_session(monkeypatch, session)
+    assert await tasks._save_full_commentary(
+        review.id, attempt, FullCommentaryResult(comments={0: "Late replacement"}),
+        finalize=True,
+    ) == "skipped"
+    assert review.comments == {"0": {"text": "Previously saved"}}
+    session.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio

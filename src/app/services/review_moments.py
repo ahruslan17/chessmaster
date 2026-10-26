@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 import chess
 import chess.pgn
 
+from app.services.opening_matcher import OpeningMatcher
 from app.services.stockfish_analyzer import MoveEvaluation, classify_evaluation
 
 MAX_MOMENTS = 5
@@ -204,6 +205,7 @@ def _select_moments(candidates: list[_Moment]) -> list[_Moment]:
 
 def build_review_context(
     pgn_text: str, evaluations: list[MoveEvaluation], player_color: str,
+    *, include_all_moves: bool = False,
 ) -> dict[str, object]:
     """Build reusable side-specific JSON context from matching engine evaluations.
 
@@ -222,6 +224,9 @@ def build_review_context(
         raise ValueError("Engine evaluations do not match PGN length")
     board = game.board()
     candidates: list[_Moment] = []
+    all_moments: list[dict[str, object]] = []
+    candidates_by_color: dict[str, list[_Moment]] = {"white": [], "black": []}
+    opening = OpeningMatcher().match(moves) if include_all_moves else None
     for index, (move, ev) in enumerate(zip(moves, evaluations, strict=True)):
         color = "white" if board.turn else "black"
         if (
@@ -229,18 +234,34 @@ def build_review_context(
             or ev.color != color or ev.move_number != board.fullmove_number
         ):
             raise ValueError(f"Engine evaluation does not match PGN at ply {index}")
-        if color == player_color:
+        if color == player_color or include_all_moves:
             if ev.score_before is not None and ev.score_after is not None and (
                 ev.score_before.mate is not None or ev.score_after.mate is not None
             ):
                 ev = replace(ev, classification=classify_evaluation(
                     ev.eval_before, ev.eval_after, board.turn, ev.score_before, ev.score_after,
                 ))
+            moment = _build_moment(index, board, ev)
+            if include_all_moves:
+                entry = moment.to_json()
+                entry["is_theory"] = opening is not None and index < opening.move_count
+                all_moments.append(entry)
             if ev.classification in _SEVERITY:
-                candidates.append(_build_moment(index, board, ev))
+                candidates_by_color[color].append(moment)
+                if color == player_color:
+                    candidates.append(moment)
         board.push(move)
-    return {
+    context = {
         "version": 1, "player_color": player_color,
         "moments": [moment.to_json() for moment in _select_moments(candidates)],
         "perspective": "white",
     }
+    if include_all_moves:
+        context.update({
+            "commentary_scope": "all_moves", "moves": all_moments,
+            "moments_by_color": {
+                color: [moment.to_json() for moment in _select_moments(items)]
+                for color, items in candidates_by_color.items()
+            },
+        })
+    return context

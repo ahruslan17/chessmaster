@@ -37,15 +37,17 @@ export interface ReviewMoment {
 
 export interface SideReview {
   player_color: PlayerColor;
+  owner_color?: PlayerColor;
   status: EngineStatus | "partial";
   error: string | null;
-  context: { version: 1; player_color: PlayerColor; moments: ReviewMoment[] } | null;
+  context: { version: 1; player_color: PlayerColor; moments: ReviewMoment[]; commentary_scope?: "all_moves"; moves?: ReviewMoment[] } | null;
   comments: Record<string, {
-    reason: string;
-    consequence: string;
-    alternative: string;
-    principle: string;
-    limitation: string;
+    text?: string;
+    reason?: string;
+    consequence?: string;
+    alternative?: string;
+    principle?: string;
+    limitation?: string;
   }>;
   summary: string | null;
   recommendations: string[];
@@ -84,6 +86,7 @@ export interface MoveAnalysisRead {
   played_line?: unknown;
   centipawn_loss: number | null;
   classification: string | null;
+  is_theory?: boolean;
   top_moves: unknown;
   continuation_lines: unknown;
   llm_comment: string | null;

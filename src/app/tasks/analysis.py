@@ -16,7 +16,12 @@ from app.models.game import Game
 from app.models.game_analysis import GameAnalysis
 from app.models.side_review import SideReview
 from app.services.game_review import GameReviewService
-from app.services.llm_coach import LLMCoachService, ReviewExplanationResult
+from app.services.llm_coach import (
+    FULL_COMMENTARY_BATCH_SIZE,
+    FullCommentaryResult,
+    LLMCoachService,
+    ReviewExplanationResult,
+)
 from app.services.pgn_parser import PGNParserService
 from app.services.stockfish_analyzer import StockfishAnalyzerService
 
@@ -195,6 +200,24 @@ async def _run_explanation_pipeline(
     try:
         if not _llm_enabled():
             raise ValueError("LLM не настроен; результаты движка сохранены")
+        if context.get("commentary_scope") == "all_moves":
+            missing = [
+                move for move in context["moves"]
+                if str(move["move_index"]) not in (comments or {})
+            ]
+            coach = LLMCoachService()
+            for start in range(0, len(missing), FULL_COMMENTARY_BATCH_SIZE):
+                if await _save_full_commentary(review_id, attempt_id, None) == "skipped":
+                    return {"game_id": game_id_str, "status": "skipped"}
+                batch = missing[start:start + FULL_COMMENTARY_BATCH_SIZE]
+                result = await coach.generate_full_commentary({"moves": batch})
+                status = await _save_full_commentary(review_id, attempt_id, result)
+                if status == "skipped":
+                    return {"game_id": game_id_str, "status": status}
+                if set(result.comments) != {move["move_index"] for move in batch}:
+                    break  # Partial response requires an explicit retry, never a paid auto-retry.
+            status = await _save_full_commentary(review_id, attempt_id, None, finalize=True)
+            return {"game_id": game_id_str, "status": status}
         ready = comments or {}
         # Full context is needed for a sound summary; coach generates only missing comments.
         context["missing_comment_indices"] = [
@@ -236,13 +259,46 @@ async def _lock_current_review(
 def _merge_usage(existing: dict | None, attempt_id: uuid.UUID, usage: dict | None) -> dict:
     attempts = dict((existing or {}).get("attempts", {}))
     if usage:
-        attempts[str(attempt_id)] = usage
+        previous = attempts.get(str(attempt_id), {})
+        attempts[str(attempt_id)] = {
+            **previous, **usage,
+            **{key: previous.get(key, 0) + value for key, value in usage.items()
+               if isinstance(value, (int, float)) and not isinstance(value, bool)},
+        }
     totals: dict[str, int | float] = {}
     for entry in attempts.values():
         for key, value in entry.items():
             if isinstance(value, (int, float)) and not isinstance(value, bool):
                 totals[key] = totals.get(key, 0) + value
     return {"attempts": attempts, "total": totals}
+
+
+async def _save_full_commentary(
+    review_id: uuid.UUID, attempt_id: uuid.UUID, result: FullCommentaryResult | None,
+    *, finalize: bool = False,
+) -> str:
+    """Persist each batch under the existing attempt fence; never discard ready text."""
+    async with async_session_factory() as session:
+        review = await _lock_current_review(session, review_id, attempt_id)
+        if review is None:
+            return "skipped"
+        expected = {str(move["move_index"]) for move in review.context["moves"]}
+        comments = dict(review.comments or {})
+        if result is not None:
+            for index, text in result.comments.items():
+                if str(index) in expected:
+                    comments.setdefault(str(index), {"text": text})
+            review.usage = _merge_usage(review.usage, attempt_id, result.usage)
+        review.comments = comments
+        if finalize:
+            complete = expected <= comments.keys()
+            review.status = "done" if complete else "partial"
+            review.error = (
+                None if complete else "Комментарии получены не для всех ходов. Дополните разбор."
+            )
+        review.heartbeat_at = datetime.now(UTC)
+        await session.commit()
+        return review.status
 
 
 async def _save_explanations(

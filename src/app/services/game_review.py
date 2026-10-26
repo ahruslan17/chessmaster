@@ -233,7 +233,7 @@ class GameReviewService:
         self, game_id: uuid.UUID, player_color: str, recover: bool = False,
         expected_attempt_id: uuid.UUID | None = None,
     ) -> tuple[SideReview, bool]:
-        """Save validated side-scoped context before coach task publication."""
+        """Queue shared full-game commentary; selected side only scopes highlights."""
         from app.services.review_moments import build_review_context
 
         if player_color not in {"white", "black"}:
@@ -246,8 +246,13 @@ class GameReviewService:
             )
         result = await self._session.execute(
             select(SideReview).where(
-                SideReview.game_analysis_id == analysis.id, SideReview.player_color == player_color
-            ).with_for_update()
+                SideReview.game_analysis_id == analysis.id,
+                (SideReview.player_color == player_color)
+                | (SideReview.context["commentary_scope"].astext == "all_moves"),
+            ).order_by(
+                (SideReview.context["commentary_scope"].astext == "all_moves").desc().nulls_last(),
+                (SideReview.player_color == player_color).desc(),
+            ).limit(1).with_for_update()
         )
         review = result.scalar_one_or_none()
         if recover and (review.attempt_id if review else None) != expected_attempt_id:
@@ -257,7 +262,12 @@ class GameReviewService:
         same_result = review is not None and (
             (review.context or {}).get("engine_result_id") == str(analysis.engine_result_id)
         )
-        if same_result and not recover and review.status in {"queued", "in_progress", "done"}:
+        full_review = review is not None and (
+            (review.context or {}).get("commentary_scope") == "all_moves"
+        )
+        if same_result and not recover and (
+            review.status in {"queued", "in_progress"} or (full_review and review.status == "done")
+        ):
             return review, False
         result = await self._session.execute(
             select(MoveAnalysis).where(MoveAnalysis.game_analysis_id == analysis.id)
@@ -270,7 +280,9 @@ class GameReviewService:
             )
         try:
             context = build_review_context(
-                game.pgn_text, [_restore_evaluation(r) for r in records], player_color
+                game.pgn_text, [_restore_evaluation(r) for r in records],
+                review.player_color if review is not None else player_color,
+                include_all_moves=True,
             )
         except (ValueError, TypeError, KeyError) as exc:
             raise HTTPException(
@@ -293,13 +305,21 @@ class GameReviewService:
             review.summary = None
             review.recommendations = None
             review.usage = None
-        if review.context is None:
+        if review.context is None or not full_review:
+            if review.context is not None and not full_review:
+                review.stale_result = {
+                    "context": review.context, "comments": review.comments,
+                    "summary": review.summary, "recommendations": review.recommendations,
+                    "usage": review.usage,
+                }
+                review.summary = None
+                review.recommendations = None
             review.context = context
         review.attempt_id = uuid.uuid4()
         review.task_id = str(uuid.uuid4())
         review.heartbeat_at = None
         review.error = None
-        if not review.context["moments"]:
+        if not review.context.get("moves", review.context["moments"]):
             review.status = "done"
             review.error = "context_empty"
             review.task_id = None

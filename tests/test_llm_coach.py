@@ -495,6 +495,60 @@ def _review_response(index: int = 0) -> dict:
     }
 
 
+@pytest.mark.parametrize("indices", [[0, 1], [0], []])
+async def test_full_commentary_handles_both_sides_and_reports_partial_response(indices):
+    context = {"moves": [*_review_context("white")["moments"],
+                         *_review_context("black")["moments"]]}
+    context["moves"][0]["is_theory"] = True
+    response = {"comments": [
+        {"move_index": i, "comment": "Ход укрепляет центр."} for i in indices
+    ]}
+    coach = LLMCoachService(model="test-model", api_key="test-key", api_base="")
+    with patch(
+        "app.services.llm_coach.litellm.acompletion", new_callable=AsyncMock,
+        return_value=_mock_llm_response(json.dumps(response)),
+    ) as call:
+        result = await coach.generate_full_commentary(context)
+    assert set(result.comments) == set(indices)
+    assert result.usage["total_tokens"] == 70
+    assert call.call_args.kwargs["max_tokens"] == 4096
+    assert call.call_args.kwargs["timeout"] == 180
+    assert call.call_args.kwargs["extra_headers"] == {"Connection": "close"}
+    sent = json.loads(call.call_args.kwargs["messages"][1]["content"])
+    assert sent["moments"][0]["is_theory"] is True
+    assert [m["color"] for m in sent["moments"]] == ["white", "black"]
+    assert all("actual_move" in m and "engine_lines" in m for m in sent["moments"])
+
+
+@pytest.mark.parametrize("entries", [
+    [{"move_index": 1, "comment": "Ход укрепляет центр."}],
+    [{"move_index": 0, "comment": "Ход укрепляет центр."}] * 2,
+    [{"move_index": 0, "comment": "Здесь следует Nf3."}],
+    [{"move_index": 0, "comment": " "}],
+])
+async def test_full_commentary_rejects_foreign_duplicate_or_invalid_text(entries):
+    coach = LLMCoachService(model="test-model", api_key="test-key", api_base="")
+    with patch(
+        "app.services.llm_coach.litellm.acompletion", new_callable=AsyncMock,
+        return_value=_mock_llm_response(json.dumps({"comments": entries})),
+    ), pytest.raises(LLMCoachError) as caught:
+        await coach.generate_full_commentary({"moves": _review_context()["moments"]})
+    assert caught.value.usage["total_tokens"] == 70
+
+
+async def test_full_commentary_allows_square_names_without_invented_move_notation():
+    coach = LLMCoachService(model="test-model", api_key="test-key", api_base="")
+    text = "Пешка контролирует поле d5 и поддерживает борьбу за центр."
+    with patch(
+        "app.services.llm_coach.litellm.acompletion", new_callable=AsyncMock,
+        return_value=_mock_llm_response(json.dumps({
+            "comments": [{"move_index": 0, "comment": text}],
+        })),
+    ):
+        result = await coach.generate_full_commentary({"moves": _review_context()["moments"]})
+    assert result.comments == {0: text}
+
+
 class TestReviewExplanation:
     @pytest.fixture()
     def service(self) -> LLMCoachService:

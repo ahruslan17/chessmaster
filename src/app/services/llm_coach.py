@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints,
 from app.core.config import settings
 from app.services.stockfish_analyzer import EngineScore
 from app.utils.llm_prompts import (
+    build_full_commentary_messages,
     build_game_summary_messages,
     build_move_commentary_messages,
     build_period_report_messages,
@@ -29,6 +30,7 @@ from app.utils.llm_prompts import (
 logger = logging.getLogger(__name__)
 _LLM_TIMEOUT_SECONDS = 90
 _MAX_REVIEW_COMMENTS = 5
+FULL_COMMENTARY_BATCH_SIZE = 5
 _CLASSIFICATIONS = frozenset({
     "theory", "excellent", "best", "good", "inaccuracy", "mistake", "blunder",
 })
@@ -93,6 +95,11 @@ class _MoveCommentsResponse(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     comments: list[_MoveComment]
+
+
+class FullCommentaryResult(BaseModel):
+    comments: dict[int, str]
+    usage: dict[str, JsonValue] = Field(default_factory=dict)
 
 
 class _PeriodPattern(BaseModel):
@@ -325,6 +332,39 @@ class LLMCoachService:
         )
         return result
 
+    async def generate_full_commentary(self, context: dict) -> FullCommentaryResult:
+        """Explain every requested ply, with the same board/line checks as selected reviews."""
+        moments = context["moves"]
+        if not moments or len(moments) > FULL_COMMENTARY_BATCH_SIZE:
+            raise LLMCoachError("Full commentary batch must contain 1–5 moves")
+        for color in ("white", "black"):
+            own = [move for move in moments if move["color"] == color]
+            for start in range(0, len(own), _MAX_REVIEW_COMMENTS):
+                _validate_review_context({
+                    "version": 1, "player_color": color, "perspective": "white",
+                    "moments": own[start:start + _MAX_REVIEW_COMMENTS],
+                })
+        evidence = _review_evidence_projection({
+            "version": 1, "perspective": "white", "moments": moments,
+        })
+        for projected, original in zip(evidence["moments"], moments, strict=True):
+            projected["is_theory"] = original.get("is_theory", False)
+        raw, usage = await self._call_llm_with_usage(
+            build_full_commentary_messages(evidence), max_tokens=4096, timeout_seconds=180,
+        )
+        try:
+            response = _MoveCommentsResponse.model_validate(_parse_json_response(raw))
+            expected = {move["move_index"] for move in moments}
+            comments: dict[int, str] = {}
+            for entry in response.comments:
+                if entry.move_index not in expected or entry.move_index in comments:
+                    raise LLMCoachError("Invalid or duplicate commentary move_index")
+                _reject_prose_moves(entry.comment, allow_square_references=True)
+                comments[entry.move_index] = entry.comment
+            return FullCommentaryResult(comments=comments, usage=usage)
+        except (ValidationError, LLMCoachError) as exc:
+            raise LLMCoachError("Invalid full commentary response", usage=usage) from exc
+
     async def generate_single_move_commentary_stream(
         self, move: MoveCommentaryInput
     ) -> AsyncIterator[str]:
@@ -427,11 +467,12 @@ class LLMCoachService:
         return content
 
     async def _call_llm_with_usage(
-        self, messages: list[dict[str, str]]
+        self, messages: list[dict[str, str]], *, max_tokens: int | None = None,
+        timeout_seconds: int = _LLM_TIMEOUT_SECONDS,
     ) -> tuple[str, dict[str, JsonValue]]:
         usage: dict[str, JsonValue] = {}
         try:
-            async with asyncio.timeout(_LLM_TIMEOUT_SECONDS):
+            async with asyncio.timeout(timeout_seconds):
                 response = await litellm.acompletion(
                     model=self._model,
                     messages=messages,
@@ -439,8 +480,11 @@ class LLMCoachService:
                     api_base=self._api_base,
                     response_format={"type": "json_object"},
                     temperature=0.4,
-                    timeout=_LLM_TIMEOUT_SECONDS,
+                    timeout=timeout_seconds,
                     max_retries=0,
+                    **({"max_tokens": max_tokens} if max_tokens is not None else {}),
+                    **({"extra_headers": {"Connection": "close"}}
+                       if max_tokens is not None else {}),
                 )
                 usage = _response_usage(response)
                 content = response.choices[0].message.content
@@ -581,7 +625,7 @@ def _context_engine_score(value: object) -> EngineScore | None:
     return EngineScore(**value)
 
 
-def _reject_prose_moves(text: str) -> None:
+def _reject_prose_moves(text: str, *, allow_square_references: bool = False) -> None:
     """No generated SAN/UCI, even legal tokens: only the UI renders engine lines.
 
     Bare pawn SAN is indistinguishable from a square. Explicit Russian square
@@ -590,8 +634,10 @@ def _reject_prose_moves(text: str) -> None:
     """
     for match in _MOVE_NOTATION.finditer(text):
         token = match.group()
-        if re.fullmatch(r"[a-h][1-8]", token) and re.search(
-            r"(?:\bна|\bполе|\bполя|\bклетке)\s+$", text[:match.start()], re.IGNORECASE
+        if re.fullmatch(r"[a-h][1-8]", token) and (
+            allow_square_references or re.search(
+                r"(?:\bна|\bполе|\bполя|\bклетке)\s+$", text[:match.start()], re.IGNORECASE
+            )
         ):
             continue
         raise LLMCoachError("Generated prose must not contain SAN/UCI moves")
